@@ -20,10 +20,12 @@ A Zig library for building Cloudflare Workers with WebAssembly. Write high-perfo
 
 ## Installation
 
+> **Note:** Use the `main` branch for the latest features including ergonomic APIs (`ctx.param()`, `ctx.bodyJson()`, `db.query()`, etc.). A stable v0.2.0 release is coming soon.
+
 ### Via zig fetch
 
 ```bash
-zig fetch --save https://github.com/ealecho/cf-workerz/archive/refs/tags/v0.1.0.tar.gz
+zig fetch --save https://github.com/ealecho/cf-workerz/archive/refs/heads/main.tar.gz
 ```
 
 ### Manual (build.zig.zon)
@@ -33,7 +35,7 @@ Add to your `build.zig.zon`:
 ```zig
 .dependencies = .{
     .cf_workerz = .{
-        .url = "https://github.com/ealecho/cf-workerz/archive/refs/tags/v0.1.0.tar.gz",
+        .url = "https://github.com/ealecho/cf-workerz/archive/refs/heads/main.tar.gz",
         .hash = "...",  // zig fetch will provide this
     },
 },
