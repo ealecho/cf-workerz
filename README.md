@@ -112,13 +112,13 @@ fn handleHello(ctx: *FetchContext) void {
 fn handleCreateUser(ctx: *FetchContext) void {
     // Parse JSON request body with ctx.bodyJson()
     var json = ctx.bodyJson() orelse {
-        ctx.json(.{ .@"error" = "Invalid JSON body" }, 400);
+        ctx.json(.{ .err = "Invalid JSON body" }, 400);
         return;
     };
     defer json.deinit();
 
     const name = json.getString("name") orelse {
-        ctx.json(.{ .@"error" = "Name is required" }, 400);
+        ctx.json(.{ .err = "Name is required" }, 400);
         return;
     };
     const email = json.getStringOr("email", "");
@@ -615,7 +615,7 @@ export fn handleFetch(ctx_id: u32) void {
 fn handleGetUser(ctx: *FetchContext) void {
     // Preferred: use ctx.param() shorthand (Hono-style)
     const id = ctx.param("id") orelse {
-        ctx.json(.{ .@"error" = "Missing user ID" }, 400);
+        ctx.json(.{ .err = "Missing user ID" }, 400);
         return;
     };
     
@@ -1123,14 +1123,14 @@ const workers = @import("cf-workerz");
 fn handleCreateUser(ctx: *workers.FetchContext) void {
     // Parse request body as JSON
     var json = ctx.bodyJson() orelse {
-        ctx.json(.{ .@"error" = "Invalid JSON body" }, 400);
+        ctx.json(.{ .err = "Invalid JSON body" }, 400);
         return;
     };
     defer json.deinit();
     
     // Get required string field
     const name = json.getString("name") orelse {
-        ctx.json(.{ .@"error" = "Name is required" }, 400);
+        ctx.json(.{ .err = "Name is required" }, 400);
         return;
     };
     
