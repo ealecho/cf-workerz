@@ -1,0 +1,18 @@
+# Zig build artifacts
+zig-out/
+zig-cache/
+.zig-cache/
+
+# Node modules
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

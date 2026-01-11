@@ -1,0 +1,17 @@
+.{
+    .name = .hello_world,
+    .fingerprint = 0xf73eae9156a7cdf6,
+    .version = "0.1.0",
+
+    .dependencies = .{
+        .cf_workerz = .{
+            .path = "../..",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
