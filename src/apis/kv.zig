@@ -1,3 +1,49 @@
+//! Cloudflare Workers KV - Global, low-latency key-value storage.
+//!
+//! Workers KV is a global, low-latency, key-value data store. It supports
+//! exceptionally high read volumes with low-latency, making it possible to
+//! build highly dynamic APIs and websites that respond as quickly as a cached
+//! static file would.
+//!
+//! ## Quick Start
+//!
+//! ```zig
+//! fn handleKV(ctx: *FetchContext) void {
+//!     const kv = ctx.env.kv("MY_KV") orelse {
+//!         ctx.throw(500, "KV not configured");
+//!         return;
+//!     };
+//!     defer kv.free();
+//!
+//!     // Get a value
+//!     if (kv.getText("user:123", .{})) |value| {
+//!         ctx.json(.{ .data = value }, 200);
+//!         return;
+//!     }
+//!
+//!     // Put a value
+//!     kv.put("user:123", .{ .text = "Alice" }, .{});
+//!
+//!     // Put with TTL (expires in 1 hour)
+//!     kv.put("session:abc", .{ .text = "token" }, .{ .expirationTtl = 3600 });
+//!
+//!     // Delete a value
+//!     kv.delete("old:key");
+//!
+//!     ctx.json(.{ .stored = true }, 200);
+//! }
+//! ```
+//!
+//! ## Configuration
+//!
+//! Add to your `wrangler.toml`:
+//!
+//! ```toml
+//! [[kv_namespaces]]
+//! binding = "MY_KV"
+//! id = "your-kv-namespace-id"
+//! ```
+
 const std = @import("std");
 const allocator = std.heap.page_allocator;
 const common = @import("../bindings/common.zig");
@@ -20,6 +66,23 @@ const AsyncFunction = @import("../bindings/function.zig").AsyncFunction;
 
 // https://github.com/cloudflare/workers-types/blob/master/index.d.ts#L932
 // Note: To simplify, we getX rather than applying type to the options.
+
+/// Options for KV get operations.
+///
+/// ## Fields
+///
+/// - `cacheTtl`: Optional cache TTL in seconds. If specified, the value will be
+///   cached at the edge for this duration. Minimum is 60 seconds.
+///
+/// ## Example
+///
+/// ```zig
+/// // Get with default options (no caching)
+/// const value = kv.getText("key", .{});
+///
+/// // Get with 5-minute edge cache
+/// const cached = kv.getText("key", .{ .cacheTtl = 300 });
+/// ```
 pub const GetOptions = struct {
     cacheTtl: ?u64 = null,
 
@@ -32,6 +95,38 @@ pub const GetOptions = struct {
 };
 
 // https://github.com/cloudflare/workers-types/blob/master/index.d.ts#L890
+
+/// Value types that can be stored in KV.
+///
+/// KV supports storing text, binary data, objects, and streams. Use the
+/// appropriate variant based on your data type.
+///
+/// ## Variants
+///
+/// | Variant | Use Case |
+/// |---------|----------|
+/// | `.text` | UTF-8 strings (most common) |
+/// | `.bytes` | Binary data as `[]const u8` |
+/// | `.object` | JSON-serializable objects |
+/// | `.arrayBuffer` | Raw `ArrayBuffer` from JS |
+/// | `.readableStream` | Streaming data |
+///
+/// ## Example
+///
+/// ```zig
+/// // Store text
+/// kv.put("greeting", .{ .text = "Hello, World!" }, .{});
+///
+/// // Store binary data
+/// const data = [_]u8{ 0x00, 0x01, 0x02 };
+/// kv.put("binary", .{ .bytes = &data }, .{});
+///
+/// // Store JSON object
+/// const obj = Object.new();
+/// defer obj.free();
+/// obj.setText("name", "Alice");
+/// kv.put("user", .{ .object = &obj }, .{});
+/// ```
 pub const PutValue = union(enum) {
     text: []const u8,
     string: *const String,
@@ -62,6 +157,32 @@ pub const PutValue = union(enum) {
 };
 
 // https://github.com/cloudflare/workers-types/blob/master/index.d.ts#L960
+
+/// Options for KV put operations.
+///
+/// Control expiration and attach metadata to stored values.
+///
+/// ## Fields
+///
+/// - `expiration`: Unix timestamp (seconds since epoch) when the key expires
+/// - `expirationTtl`: Seconds from now until the key expires (minimum 60)
+/// - `metadata`: Optional JSON object to store alongside the value
+///
+/// ## Example
+///
+/// ```zig
+/// // Store with 1-hour TTL
+/// kv.put("session", .{ .text = "token" }, .{ .expirationTtl = 3600 });
+///
+/// // Store with absolute expiration
+/// kv.put("cache", .{ .text = "data" }, .{ .expiration = 1735689600 });
+///
+/// // Store with metadata
+/// const meta = Object.new();
+/// defer meta.free();
+/// meta.setText("created_by", "system");
+/// kv.put("key", .{ .text = "value" }, .{ .metadata = &meta });
+/// ```
 pub const PutOptions = struct {
     expiration: ?u64 = null, // secondsSinceEpoch
     expirationTtl: ?u64 = null, // secondsFromNow
@@ -79,6 +200,43 @@ pub const PutOptions = struct {
 };
 
 // https://github.com/cloudflare/workers-types/blob/master/index.d.ts#L948
+
+/// Options for listing keys in a KV namespace.
+///
+/// ## Fields
+///
+/// - `limit`: Maximum number of keys to return (default 1000, max 1000)
+/// - `prefix`: Only return keys starting with this prefix
+/// - `cursor`: Pagination cursor from a previous `list()` call
+///
+/// ## Example
+///
+/// ```zig
+/// // List all keys (up to 1000)
+/// const result = kv.list(.{});
+/// defer result.free();
+///
+/// // List keys with a prefix
+/// const users = kv.list(.{ .prefix = "user:", .limit = 100 });
+/// defer users.free();
+///
+/// // Paginate through all keys
+/// var cursor: ?[]const u8 = null;
+/// while (true) {
+///     const page = kv.list(.{ .cursor = cursor });
+///     defer page.free();
+///
+///     var keys = page.keys();
+///     defer keys.free();
+///     while (keys.next()) |key| {
+///         defer key.free();
+///         // Process key.name()
+///     }
+///
+///     if (page.listComplete()) break;
+///     cursor = page.cursor();
+/// }
+/// ```
 pub const ListOptions = struct {
     limit: u16 = 1_000,
     prefix: ?[]const u8 = null,
@@ -100,6 +258,34 @@ pub const ListOptions = struct {
 };
 
 // https://github.com/cloudflare/workers-types/blob/master/index.d.ts#L954
+
+/// Result from a KV list operation.
+///
+/// Contains the list of keys and pagination information. Use `keys()` to
+/// iterate over the results, `listComplete()` to check if there are more
+/// pages, and `cursor()` to get the pagination cursor for the next page.
+///
+/// ## Example
+///
+/// ```zig
+/// const result = kv.list(.{ .prefix = "user:" });
+/// defer result.free();
+///
+/// var keys = result.keys();
+/// defer keys.free();
+///
+/// while (keys.next()) |key| {
+///     defer key.free();
+///     const name = key.name();
+///     const expiration = key.expiration(); // ?u64
+///     // Process key...
+/// }
+///
+/// if (!result.listComplete()) {
+///     const next_cursor = result.cursor();
+///     // Use cursor for next page
+/// }
+/// ```
 pub const ListResult = struct {
     id: u32,
 
@@ -107,23 +293,40 @@ pub const ListResult = struct {
         return ListResult{ .id = id };
     }
 
+    /// Release the JavaScript object. Always call this when done.
     pub fn free(self: *const ListResult) void {
         jsFree(self.id);
     }
 
+    /// Get an iterator over the keys in this result.
+    ///
+    /// Returns a `ListKeys` iterator that yields `ListKey` objects.
+    /// Remember to free both the iterator and each key.
     pub fn keys(self: *const ListResult) ListKeys {
         return ListKeys.init(getObjectValue(self.id, "keys"));
     }
 
+    /// Get the pagination cursor for the next page.
+    ///
+    /// Use this value in `ListOptions.cursor` to fetch the next page of results.
+    /// Only valid when `listComplete()` returns `false`.
     pub fn cursor(self: *const ListResult) []const u8 {
         return getStringFree(getObjectValue(self.id, "cursor"));
     }
 
+    /// Check if all keys have been returned.
+    ///
+    /// Returns `true` if there are no more pages, `false` if you should
+    /// call `list()` again with the `cursor()` value.
     pub fn listComplete(self: *const ListResult) bool {
         const jsPtr = getObjectValue(self.id, "list_complete");
         return jsPtr == True;
     }
 
+    /// Iterator over keys returned from a list operation.
+    ///
+    /// Use `next()` to iterate and get `ListKey` objects.
+    /// Remember to call `free()` on the iterator when done.
     pub const ListKeys = struct {
         arr: Array,
         pos: u32 = 0,
@@ -137,10 +340,14 @@ pub const ListResult = struct {
             };
         }
 
+        /// Release the underlying array. Call when done iterating.
         pub fn free(self: *const ListKeys) void {
             self.arr.free();
         }
 
+        /// Get the next key in the list, or `null` if exhausted.
+        ///
+        /// Remember to call `free()` on each returned `ListKey`.
         pub fn next(self: *ListKeys) ?ListKey {
             if (self.pos == self.len) return null;
             const listkey = self.arr.getType(ListKey, self.pos);
@@ -149,6 +356,9 @@ pub const ListResult = struct {
         }
     };
 
+    /// A single key from a list operation.
+    ///
+    /// Contains the key name and optional metadata/expiration information.
     pub const ListKey = struct {
         id: u32,
 
@@ -156,26 +366,37 @@ pub const ListResult = struct {
             return ListKey{ .id = jsPtr };
         }
 
+        /// Release the JavaScript object.
         pub fn free(self: *const ListKey) void {
             jsFree(self.id);
         }
 
+        /// Get the key name.
         pub fn name(self: *const ListKey) []const u8 {
             return getStringFree(getObjectValue(self.id, "name"));
         }
 
+        /// Get the expiration timestamp (seconds since epoch), if set.
+        ///
+        /// Returns `null` if the key has no expiration.
         pub fn expiration(self: *const ListKey) ?u64 {
             const num = getObjectValueNum(self.id, "expiration", u64);
             if (num <= DefaultValueSize) return null;
             return num;
         }
 
+        /// Parse the key's metadata into a Zig struct.
+        ///
+        /// Returns `null` if no metadata exists or parsing fails.
         pub fn metadata(self: *const ListKey, comptime T: type) ?T {
             const obj = self.metaObject() orelse return null;
             defer obj.free();
             return obj.parse(T) orelse null;
         }
 
+        /// Get the key's metadata as a raw JavaScript Object.
+        ///
+        /// Returns `null` if no metadata exists. Remember to `free()` the object.
         pub fn metaObject(self: *const ListKey) ?Object {
             const objPtr = getObjectValue(self.id, "metadata");
             if (objPtr <= DefaultValueSize) return null;
@@ -185,10 +406,55 @@ pub const ListResult = struct {
 };
 
 // https://github.com/cloudflare/workers-types/blob/master/index.d.ts#L852
-// Workers KV is a global, low-latency, key-value data store.
-// It supports exceptionally high read volumes with low-latency,
-// making it possible to build highly dynamic APIs and websites
-// which respond as quickly as a cached static file would.
+
+/// Cloudflare Workers KV Namespace.
+///
+/// Workers KV is a global, low-latency, key-value data store. It supports
+/// exceptionally high read volumes with low-latency, making it possible to
+/// build highly dynamic APIs and websites that respond as quickly as a
+/// cached static file would.
+///
+/// ## Getting a KV Namespace
+///
+/// ```zig
+/// fn handler(ctx: *FetchContext) void {
+///     const kv = ctx.env.kv("MY_KV") orelse {
+///         ctx.throw(500, "KV binding not found");
+///         return;
+///     };
+///     defer kv.free();
+///
+///     // Use kv...
+/// }
+/// ```
+///
+/// ## Common Operations
+///
+/// ```zig
+/// // Store a value
+/// kv.put("key", .{ .text = "value" }, .{});
+///
+/// // Store with expiration (1 hour TTL)
+/// kv.put("session", .{ .text = "token" }, .{ .expirationTtl = 3600 });
+///
+/// // Get as text
+/// if (kv.getText("key", .{})) |value| {
+///     // value is []const u8
+/// }
+///
+/// // Get as JSON struct
+/// const User = struct { name: []const u8, age: u32 };
+/// if (kv.getJSON(User, "user:123", .{})) |user| {
+///     // user.name, user.age
+/// }
+///
+/// // Delete
+/// kv.delete("key");
+///
+/// // List keys
+/// const result = kv.list(.{ .prefix = "user:" });
+/// defer result.free();
+/// ```
 pub const KVNamespace = struct {
     id: u32,
 
@@ -196,10 +462,33 @@ pub const KVNamespace = struct {
         return KVNamespace{ .id = ptr };
     }
 
+    /// Release the JavaScript binding. Always call when done.
     pub fn free(self: *const KVNamespace) void {
         jsFree(self.id);
     }
 
+    /// Store a value in KV.
+    ///
+    /// ## Parameters
+    ///
+    /// - `key`: The key to store (max 512 bytes)
+    /// - `value`: The value to store (see `PutValue` for types)
+    /// - `options`: Expiration and metadata options
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // Simple text storage
+    /// kv.put("greeting", .{ .text = "Hello!" }, .{});
+    ///
+    /// // With 1-hour expiration
+    /// kv.put("cache:data", .{ .text = json_string }, .{
+    ///     .expirationTtl = 3600,
+    /// });
+    ///
+    /// // Binary data
+    /// kv.put("image", .{ .bytes = image_data }, .{});
+    /// ```
     pub fn put(self: *const KVNamespace, key: []const u8, value: PutValue, options: PutOptions) void {
         // prep the string
         const str = String.new(key);
@@ -223,6 +512,19 @@ pub const KVNamespace = struct {
         _ = func.callArgsID(args.id);
     }
 
+    /// Store a value with a Zig struct as metadata.
+    ///
+    /// Automatically serializes the metadata struct to JSON.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const Meta = struct { created_at: u64, version: u32 };
+    /// kv.putMetadata("key", .{ .text = "value" }, Meta, .{
+    ///     .created_at = 1234567890,
+    ///     .version = 1,
+    /// }, .{});
+    /// ```
     pub fn putMetadata(self: *const KVNamespace, key: []const u8, value: PutValue, comptime T: type, metadata: T, options: PutOptions) void {
         // prep the string
         const str = String.new(key);
@@ -313,12 +615,17 @@ pub const KVNamespace = struct {
         return func.callArgsID(args.id);
     }
 
+    /// Get a value as a JavaScript String object.
+    ///
+    /// Returns `null` if the key doesn't exist. Remember to `free()` the String.
+    /// For most cases, prefer `getText()` which returns a Zig slice directly.
     pub fn getString(self: *const KVNamespace, key: []const u8, options: GetOptions) ?String {
         const result = self._get(key, options, "text");
         if (result <= DefaultValueSize) return null;
         return String{ .id = result };
     }
 
+    /// Value and metadata returned from `getStringWithMetadata`.
     pub const KVStringMetadata = struct {
         value: String,
         metadata: ?Object,
@@ -338,6 +645,7 @@ pub const KVNamespace = struct {
         }
     };
 
+    /// Get a value as a String along with its metadata.
     pub fn getStringWithMetadata(self: *const KVNamespace, key: []const u8, options: GetOptions) ?KVStringMetadata {
         const result = self._getMeta(key, options, "text");
         if (result <= DefaultValueSize) return null;
@@ -346,12 +654,27 @@ pub const KVNamespace = struct {
         return KVStringMetadata.init(resObj.get("value"), resObj.get("metadata"));
     }
 
+    /// Get a value as a Zig string slice.
+    ///
+    /// This is the most common way to retrieve text values from KV.
+    /// Returns `null` if the key doesn't exist.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// if (kv.getText("user:123:name", .{})) |name| {
+    ///     ctx.json(.{ .name = name }, 200);
+    /// } else {
+    ///     ctx.json(.{ .err = "User not found" }, 404);
+    /// }
+    /// ```
     pub fn getText(self: *const KVNamespace, key: []const u8, options: GetOptions) ?[]const u8 {
         const str = self.getString(key, options) orelse return null;
         defer str.free();
         return str.value();
     }
 
+    /// Value and metadata returned from `getTextWithMetadata`.
     pub const KVTextMetadata = struct {
         value: []const u8,
         metadata: ?Object,
@@ -363,12 +686,14 @@ pub const KVNamespace = struct {
             };
         }
 
+        /// Free the allocated string and metadata object.
         pub fn free(self: *const KVTextMetadata) void {
             allocator.free(self.value);
             self.metadata.?.free();
         }
     };
 
+    /// Get a text value along with its metadata.
     pub fn getTextWithMetadata(self: *const KVNamespace, key: []const u8, options: GetOptions) ?KVTextMetadata {
         const strMeta = self.getStringWithMetadata(key, options);
         if (strMeta == null) return null;
@@ -376,12 +701,17 @@ pub const KVNamespace = struct {
         return KVTextMetadata.init(strMeta.?.value.value(), strMeta.?.metadata);
     }
 
+    /// Get a value as a JavaScript Object (parsed JSON).
+    ///
+    /// Returns `null` if the key doesn't exist. Remember to `free()` the Object.
+    /// For typed access, prefer `getJSON()` instead.
     pub fn getObject(self: *const KVNamespace, key: []const u8, options: GetOptions) ?Object {
         const result = self._get(key, options, "json");
         if (result <= DefaultValueSize) return null;
         return Object{ .id = result };
     }
 
+    /// Value and metadata returned from `getObjectWithMetadata`.
     pub const KVObjectMetadata = struct {
         value: Object,
         metadata: ?Object,
@@ -401,6 +731,7 @@ pub const KVNamespace = struct {
         }
     };
 
+    /// Get a JSON object value along with its metadata.
     pub fn getObjectWithMetadata(self: *const KVNamespace, key: []const u8, options: GetOptions) ?KVObjectMetadata {
         const result = self._getMeta(key, options, "json");
         if (result <= DefaultValueSize) return null;
@@ -409,7 +740,29 @@ pub const KVNamespace = struct {
         return KVObjectMetadata.init(resObj.get("value"), resObj.get("metadata"));
     }
 
-    // NOTE: data must be freed by the caller
+    /// Get a JSON value and parse it directly into a Zig struct.
+    ///
+    /// This is the most ergonomic way to retrieve structured data from KV.
+    /// Automatically parses the JSON and returns a typed value.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const User = struct {
+    ///     id: u32,
+    ///     name: []const u8,
+    ///     email: []const u8,
+    /// };
+    ///
+    /// if (kv.getJSON(User, "user:123", .{})) |user| {
+    ///     ctx.json(.{
+    ///         .id = user.id,
+    ///         .name = user.name,
+    ///     }, 200);
+    /// } else {
+    ///     ctx.json(.{ .err = "User not found" }, 404);
+    /// }
+    /// ```
     pub fn getJSON(self: *const KVNamespace, comptime T: type, key: []const u8, options: GetOptions) ?T {
         // grab the data as a string
         const text = self.getText(key, options) orelse return null;
@@ -422,12 +775,17 @@ pub const KVNamespace = struct {
         return parsed.value;
     }
 
+    /// Get a value as a JavaScript ArrayBuffer.
+    ///
+    /// Returns `null` if the key doesn't exist. Remember to `free()` the ArrayBuffer.
+    /// For most cases, prefer `getBytes()` which returns a Zig slice directly.
     pub fn getArrayBuffer(self: *const KVNamespace, key: []const u8, options: GetOptions) ?ArrayBuffer {
         const result = self._get(key, options, "arrayBuffer");
         if (result <= DefaultValueSize) return null;
         return ArrayBuffer{ .id = result };
     }
 
+    /// Value and metadata returned from `getArrayBufferWithMetadata`.
     pub const KVArrayBufferMetadata = struct {
         value: ArrayBuffer,
         metadata: ?Object,
@@ -447,6 +805,7 @@ pub const KVNamespace = struct {
         }
     };
 
+    /// Get an ArrayBuffer value along with its metadata.
     pub fn getArrayBufferWithMetadata(self: *const KVNamespace, key: []const u8, options: GetOptions) ?KVArrayBufferMetadata {
         const result = self._getMeta(key, options, "arrayBuffer");
         if (result <= DefaultValueSize) return null;
@@ -455,13 +814,26 @@ pub const KVNamespace = struct {
         return KVArrayBufferMetadata.init(resObj.get("value"), resObj.get("metadata"));
     }
 
-    // NOTE: free bytes after use
+    /// Get a value as raw bytes.
+    ///
+    /// Returns `null` if the key doesn't exist.
+    /// **Note**: The caller must free the returned bytes with `allocator.free()`.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// if (kv.getBytes("image:123", .{})) |data| {
+    ///     defer std.heap.page_allocator.free(data);
+    ///     // Process binary data...
+    /// }
+    /// ```
     pub fn getBytes(self: *const KVNamespace, key: []const u8, options: GetOptions) ?[]const u8 {
         const ab = self.getArrayBuffer(key, options) orelse return null;
         defer ab.free();
         return ab.bytes();
     }
 
+    /// Value and metadata returned from `getBytesWithMetadata`.
     pub const KVBytesMetadata = struct {
         value: []const u8,
         metadata: ?Object,
@@ -473,12 +845,14 @@ pub const KVNamespace = struct {
             };
         }
 
+        /// Free the allocated bytes and metadata object.
         pub fn free(self: *const KVBytesMetadata) void {
             allocator.free(self.value);
             self.metadata.?.free();
         }
     };
 
+    /// Get raw bytes along with metadata.
     pub fn getBytesWithMetadata(self: *const KVNamespace, key: []const u8, options: GetOptions) ?KVBytesMetadata {
         const abMeta = self.getArrayBufferWithMetadata(key, options);
         if (abMeta == null) return null;
@@ -486,12 +860,17 @@ pub const KVNamespace = struct {
         return KVBytesMetadata.init(abMeta.?.value.bytes(), abMeta.?.metadata);
     }
 
+    /// Get a value as a ReadableStream for streaming large values.
+    ///
+    /// Useful for large values that shouldn't be loaded entirely into memory.
+    /// Returns `null` if the key doesn't exist.
     pub fn getStream(self: *const KVNamespace, key: []const u8, options: GetOptions) ?ReadableStream {
         const result = self._get(key, options, "stream");
         if (result <= DefaultValueSize) return null;
         return ReadableStream.init(result);
     }
 
+    /// Value and metadata returned from `getStreamWithMetadata`.
     pub const KVStreamMetadata = struct {
         value: ReadableStream,
         metadata: ?Object,
@@ -511,6 +890,7 @@ pub const KVNamespace = struct {
         }
     };
 
+    /// Get a stream value along with its metadata.
     pub fn getStreamWithMetadata(self: *const KVNamespace, key: []const u8, options: GetOptions) ?KVStreamMetadata {
         const result = self._getMeta(key, options, "stream");
         if (result <= DefaultValueSize) return null;
@@ -519,6 +899,17 @@ pub const KVNamespace = struct {
         return KVStreamMetadata.init(resObj.get("value"), resObj.get("metadata"));
     }
 
+    /// Delete a key from KV.
+    ///
+    /// This operation is idempotent - deleting a non-existent key succeeds silently.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// kv.delete("user:123");
+    /// kv.delete("session:abc");
+    /// ctx.json(.{ .deleted = true }, 200);
+    /// ```
     pub fn delete(self: *const KVNamespace, key: []const u8) void {
         // prep the string
         const str = String.new(key);
@@ -530,6 +921,33 @@ pub const KVNamespace = struct {
         _ = func.callArgsID(str.id);
     }
 
+    /// List keys in the namespace.
+    ///
+    /// Returns a `ListResult` containing keys and pagination information.
+    /// Use `prefix` to filter keys and `cursor` for pagination.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // List all keys with a prefix
+    /// const result = kv.list(.{ .prefix = "user:", .limit = 100 });
+    /// defer result.free();
+    ///
+    /// var keys = result.keys();
+    /// defer keys.free();
+    ///
+    /// while (keys.next()) |key| {
+    ///     defer key.free();
+    ///     const name = key.name();
+    ///     // Process each key...
+    /// }
+    ///
+    /// // Check if there are more pages
+    /// if (!result.listComplete()) {
+    ///     const next_cursor = result.cursor();
+    ///     // Store cursor for next page
+    /// }
+    /// ```
     pub fn list(self: *const KVNamespace, options: ListOptions) ListResult {
         // prep the opts
         const opts = options.toObject();

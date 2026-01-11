@@ -1,52 +1,119 @@
-// Router - Built-in routing for workers-zig
-//
-// A simple, zero-allocation router inspired by tokamak and workers-rs.
-// Supports path parameters (:id), wildcards (*path), and route groups.
-//
-// Example usage:
-//   const workers = @import("workers-zig");
-//   const Route = workers.Router;
-//
-//   const routes: []const Route = &.{
-//       Route.get("/", handleRoot),
-//       Route.get("/users", handleListUsers),
-//       Route.get("/users/:id", handleGetUser),
-//       Route.post("/users", handleCreateUser),
-//       Route.group("/api", &.{
-//           Route.get("/health", handleHealth),
-//       }),
-//   };
-//
-//   fn handleGetUser(ctx: *workers.FetchContext) void {
-//       const id = ctx.params.get("id") orelse {
-//           ctx.throw(400, "Missing user ID");
-//           return;
-//       };
-//       // Use id...
-//   }
-//
-//   export fn handleFetch(ctx_id: u32) void {
-//       var ctx = workers.FetchContext.init(ctx_id) catch return;
-//       Route.dispatch(&routes, ctx);
-//   }
+//! Router - Built-in routing for cf-workerz
+//!
+//! A simple, zero-allocation router inspired by tokamak and workers-rs.
+//! Supports path parameters (`:id`), wildcards (`*path`), and route groups.
+//!
+//! ## Quick Start
+//!
+//! ```zig
+//! const workers = @import("cf-workerz");
+//! const Route = workers.Router;
+//! const FetchContext = workers.FetchContext;
+//!
+//! const routes: []const Route = &.{
+//!     Route.get("/", handleRoot),
+//!     Route.get("/users", listUsers),
+//!     Route.get("/users/:id", getUser),
+//!     Route.post("/users", createUser),
+//!     Route.group("/api/v1", &.{
+//!         Route.get("/health", health),
+//!     }),
+//! };
+//!
+//! fn handleRoot(ctx: *FetchContext) void {
+//!     ctx.json(.{ .message = "Hello from cf-workerz!" }, 200);
+//! }
+//!
+//! fn getUser(ctx: *FetchContext) void {
+//!     const id = ctx.param("id") orelse {
+//!         ctx.json(.{ .err = "Missing user ID" }, 400);
+//!         return;
+//!     };
+//!     ctx.json(.{ .id = id }, 200);
+//! }
+//!
+//! export fn handleFetch(ctx_id: u32) void {
+//!     const ctx = FetchContext.init(ctx_id) catch return;
+//!     Route.dispatch(routes, ctx);
+//! }
+//! ```
+//!
+//! ## Route Patterns
+//!
+//! - **Static routes**: `/users`, `/api/v1/health`
+//! - **Path parameters**: `/users/:id`, `/posts/:postId/comments/:commentId`
+//! - **Wildcards**: `/files/*path` (matches rest of path)
+//! - **Route groups**: `Route.group("/api", &.{ ... })` for common prefixes
+//!
+//! ## Accessing Parameters
+//!
+//! Use `ctx.param("name")` (shorthand) or `ctx.params.get("name")` to access
+//! captured path parameters. For wildcards, use `ctx.params.wildcard()`.
 
 const std = @import("std");
 const Method = @import("http/common.zig").Method;
 
-/// Maximum number of path parameters supported
+/// Maximum number of path parameters supported per route.
+/// Routes with more than 8 parameters will have excess parameters ignored.
 pub const MAX_PARAMS = 8;
 
-/// Path parameters extracted from the URL
+/// Path parameters extracted from the URL during routing.
+///
+/// When a route pattern contains named parameters (`:id`) or wildcards (`*path`),
+/// the matched values are stored here and accessible via `get()`, `getIndex()`,
+/// or `wildcard()`.
+///
+/// ## Example
+///
+/// ```zig
+/// // Route pattern: "/users/:userId/posts/:postId"
+/// // Request path:  "/users/42/posts/99"
+///
+/// fn handler(ctx: *FetchContext) void {
+///     // Access by name
+///     const user_id = ctx.params.get("userId");  // "42"
+///     const post_id = ctx.params.get("postId");  // "99"
+///
+///     // Or use the shorthand
+///     const id = ctx.param("userId");  // "42"
+///
+///     // Access by index (order of appearance in pattern)
+///     const first = ctx.params.getIndex(0);  // "42"
+///     const second = ctx.params.getIndex(1); // "99"
+/// }
+/// ```
 pub const Params = struct {
     entries: [MAX_PARAMS]Entry = undefined,
     len: u8 = 0,
 
+    /// A single captured path parameter with its name and value.
+    ///
+    /// - `name`: The parameter name from the pattern (e.g., `"id"` from `:id`)
+    /// - `value`: The actual value matched from the request path
     pub const Entry = struct {
-        name: []const u8, // Parameter name (e.g., "id" from ":id")
-        value: []const u8, // Matched value from the path
+        name: []const u8,
+        value: []const u8,
     };
 
-    /// Get parameter value by name
+    /// Get a parameter value by name.
+    ///
+    /// Returns the matched value for the given parameter name, or `null`
+    /// if no parameter with that name exists.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // Route: "/users/:id"
+    /// // Path:  "/users/123"
+    ///
+    /// fn getUser(ctx: *FetchContext) void {
+    ///     const id = ctx.params.get("id") orelse {
+    ///         ctx.throw(400, "Missing id");
+    ///         return;
+    ///     };
+    ///     // id = "123"
+    /// }
+    /// ```
     pub fn get(self: *const Params, name: []const u8) ?[]const u8 {
         for (self.entries[0..self.len]) |entry| {
             if (std.mem.eql(u8, entry.name, name)) {
@@ -56,25 +123,91 @@ pub const Params = struct {
         return null;
     }
 
-    /// Get parameter value by index
+    /// Get a parameter value by index (order of appearance in pattern).
+    ///
+    /// Returns `null` if the index is out of bounds.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // Route: "/users/:userId/posts/:postId"
+    /// // Path:  "/users/42/posts/99"
+    ///
+    /// fn handler(ctx: *FetchContext) void {
+    ///     const user_id = ctx.params.getIndex(0);  // "42"
+    ///     const post_id = ctx.params.getIndex(1);  // "99"
+    ///     const missing = ctx.params.getIndex(2);  // null
+    /// }
+    /// ```
     pub fn getIndex(self: *const Params, index: usize) ?[]const u8 {
         if (index >= self.len) return null;
         return self.entries[index].value;
     }
 
-    /// Get the wildcard match (everything after *)
+    /// Get the wildcard match (everything captured by `*` or `*name`).
+    ///
+    /// Wildcards capture the rest of the path from that point forward.
+    /// This is a convenience method equivalent to `get("*")` for unnamed
+    /// wildcards or `get("name")` for named ones like `*name`.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // Route: "/files/*"
+    /// // Path:  "/files/documents/report.pdf"
+    ///
+    /// fn serveFile(ctx: *FetchContext) void {
+    ///     const path = ctx.params.wildcard() orelse "index.html";
+    ///     // path = "documents/report.pdf"
+    /// }
+    /// ```
     pub fn wildcard(self: *const Params) ?[]const u8 {
         return self.get("*");
     }
 };
 
-/// Forward declaration for FetchContext to avoid circular imports
+/// Forward declaration for FetchContext to avoid circular imports.
 const FetchContext = @import("worker/fetch.zig").FetchContext;
 
-/// Handler function type for routes
+/// Handler function type for routes.
+///
+/// All route handlers receive a mutable pointer to the `FetchContext`,
+/// which provides access to the request, parameters, environment bindings,
+/// and response methods.
 pub const HandlerFn = *const fn (ctx: *FetchContext) void;
 
-/// Route definition with pattern matching
+/// A route definition with pattern matching support.
+///
+/// Routes can be created using the static constructors (`get`, `post`, etc.)
+/// and dispatched using `dispatch()`. Supports path parameters, wildcards,
+/// and route groups for organizing related routes under a common prefix.
+///
+/// ## Example
+///
+/// ```zig
+/// const routes: []const Route = &.{
+///     // Basic routes
+///     Route.get("/", handleRoot),
+///     Route.post("/users", createUser),
+///
+///     // Path parameters
+///     Route.get("/users/:id", getUser),
+///     Route.put("/users/:id", updateUser),
+///     Route.delete("/users/:id", deleteUser),
+///
+///     // Wildcards (matches rest of path)
+///     Route.get("/files/*path", serveFile),
+///
+///     // Route groups with common prefix
+///     Route.group("/api/v1", &.{
+///         Route.get("/health", health),
+///         Route.get("/metrics", metrics),
+///     }),
+///
+///     // Match any HTTP method
+///     Route.all("/webhook", handleWebhook),
+/// };
+/// ```
 pub const Route = struct {
     method: ?Method = null, // null = any method
     pattern: []const u8 = "/",
@@ -86,48 +219,223 @@ pub const Route = struct {
     // Static Route Constructors
     // ========================================================================
 
-    /// Create a GET route
+    /// Create a GET route.
+    ///
+    /// GET requests are typically used for retrieving resources without
+    /// side effects.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const routes: []const Route = &.{
+    ///     Route.get("/", handleRoot),
+    ///     Route.get("/users", listUsers),
+    ///     Route.get("/users/:id", getUser),
+    /// };
+    ///
+    /// fn getUser(ctx: *FetchContext) void {
+    ///     const id = ctx.param("id") orelse {
+    ///         ctx.json(.{ .err = "Missing id" }, 400);
+    ///         return;
+    ///     };
+    ///     ctx.json(.{ .id = id, .name = "Alice" }, 200);
+    /// }
+    /// ```
     pub fn get(pattern: []const u8, handler: HandlerFn) Route {
         return .{ .method = .Get, .pattern = pattern, .handler = handler };
     }
 
-    /// Create a POST route
+    /// Create a POST route.
+    ///
+    /// POST requests are typically used for creating new resources.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const routes: []const Route = &.{
+    ///     Route.post("/users", createUser),
+    /// };
+    ///
+    /// fn createUser(ctx: *FetchContext) void {
+    ///     var json = ctx.bodyJson() orelse {
+    ///         ctx.json(.{ .err = "Invalid JSON" }, 400);
+    ///         return;
+    ///     };
+    ///     defer json.deinit();
+    ///
+    ///     const name = json.getString("name") orelse {
+    ///         ctx.json(.{ .err = "Name required" }, 400);
+    ///         return;
+    ///     };
+    ///     ctx.json(.{ .created = true, .name = name }, 201);
+    /// }
+    /// ```
     pub fn post(pattern: []const u8, handler: HandlerFn) Route {
         return .{ .method = .Post, .pattern = pattern, .handler = handler };
     }
 
-    /// Create a PUT route
+    /// Create a PUT route.
+    ///
+    /// PUT requests are typically used for replacing/updating entire resources.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const routes: []const Route = &.{
+    ///     Route.put("/users/:id", updateUser),
+    /// };
+    ///
+    /// fn updateUser(ctx: *FetchContext) void {
+    ///     const id = ctx.param("id") orelse return;
+    ///     var json = ctx.bodyJson() orelse return;
+    ///     defer json.deinit();
+    ///     // Update user...
+    ///     ctx.json(.{ .updated = true, .id = id }, 200);
+    /// }
+    /// ```
     pub fn put(pattern: []const u8, handler: HandlerFn) Route {
         return .{ .method = .Put, .pattern = pattern, .handler = handler };
     }
 
-    /// Create a DELETE route
+    /// Create a DELETE route.
+    ///
+    /// DELETE requests are used for removing resources.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const routes: []const Route = &.{
+    ///     Route.delete("/users/:id", deleteUser),
+    /// };
+    ///
+    /// fn deleteUser(ctx: *FetchContext) void {
+    ///     const id = ctx.param("id") orelse return;
+    ///     // Delete user from database...
+    ///     ctx.noContent(); // 204 No Content
+    /// }
+    /// ```
     pub fn delete(pattern: []const u8, handler: HandlerFn) Route {
         return .{ .method = .Delete, .pattern = pattern, .handler = handler };
     }
 
-    /// Create a PATCH route
+    /// Create a PATCH route.
+    ///
+    /// PATCH requests are used for partial updates to resources.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const routes: []const Route = &.{
+    ///     Route.patch("/users/:id", patchUser),
+    /// };
+    ///
+    /// fn patchUser(ctx: *FetchContext) void {
+    ///     const id = ctx.param("id") orelse return;
+    ///     var json = ctx.bodyJson() orelse return;
+    ///     defer json.deinit();
+    ///     // Partially update user fields...
+    ///     ctx.json(.{ .patched = true, .id = id }, 200);
+    /// }
+    /// ```
     pub fn patch(pattern: []const u8, handler: HandlerFn) Route {
         return .{ .method = .Patch, .pattern = pattern, .handler = handler };
     }
 
-    /// Create a HEAD route
+    /// Create a HEAD route.
+    ///
+    /// HEAD requests are like GET but return only headers, not the body.
+    /// Useful for checking if a resource exists or getting metadata.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const routes: []const Route = &.{
+    ///     Route.head("/files/:name", checkFile),
+    /// };
+    ///
+    /// fn checkFile(ctx: *FetchContext) void {
+    ///     const name = ctx.param("name") orelse return;
+    ///     // Check if file exists, set headers...
+    ///     ctx.noContent();
+    /// }
+    /// ```
     pub fn head(pattern: []const u8, handler: HandlerFn) Route {
         return .{ .method = .Head, .pattern = pattern, .handler = handler };
     }
 
-    /// Create an OPTIONS route
+    /// Create an OPTIONS route.
+    ///
+    /// OPTIONS requests are used for CORS preflight checks and discovering
+    /// allowed methods on a resource.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const routes: []const Route = &.{
+    ///     Route.options("/api/*", handleCors),
+    /// };
+    ///
+    /// fn handleCors(ctx: *FetchContext) void {
+    ///     // Set CORS headers via JavaScript bindings...
+    ///     ctx.noContent();
+    /// }
+    /// ```
     pub fn options(pattern: []const u8, handler: HandlerFn) Route {
         return .{ .method = .Options, .pattern = pattern, .handler = handler };
     }
 
-    /// Create a route that matches any HTTP method
+    /// Create a route that matches any HTTP method.
+    ///
+    /// Useful for webhooks, catch-all handlers, or when the same logic
+    /// applies regardless of the HTTP method.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const routes: []const Route = &.{
+    ///     Route.all("/webhook", handleWebhook),
+    ///     Route.all("/proxy/*path", proxyRequest),
+    /// };
+    ///
+    /// fn handleWebhook(ctx: *FetchContext) void {
+    ///     // Handle webhook regardless of GET, POST, etc.
+    ///     ctx.json(.{ .received = true }, 200);
+    /// }
+    /// ```
     pub fn all(pattern: []const u8, handler: HandlerFn) Route {
         return .{ .method = null, .pattern = pattern, .handler = handler };
     }
 
-    /// Create a route group with a common prefix
-    /// Child routes will have the prefix stripped before matching
+    /// Create a route group with a common prefix.
+    ///
+    /// All child routes will have the prefix automatically prepended.
+    /// Groups can be nested for deep hierarchies like `/api/v1/users/:id`.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const routes: []const Route = &.{
+    ///     Route.get("/", handleRoot),
+    ///
+    ///     // All routes under /api/v1
+    ///     Route.group("/api/v1", &.{
+    ///         Route.get("/health", health),
+    ///         Route.get("/users", listUsers),
+    ///         Route.post("/users", createUser),
+    ///
+    ///         // Nested group: /api/v1/admin/...
+    ///         Route.group("/admin", &.{
+    ///             Route.get("/stats", adminStats),
+    ///         }),
+    ///     }),
+    /// };
+    ///
+    /// // Matches:
+    /// // - GET /api/v1/health
+    /// // - GET /api/v1/users
+    /// // - POST /api/v1/users
+    /// // - GET /api/v1/admin/stats
+    /// ```
     pub fn group(prefix: []const u8, children: []const Route) Route {
         return .{ .prefix = prefix, .children = children };
     }
@@ -136,8 +444,31 @@ pub const Route = struct {
     // Dispatch
     // ========================================================================
 
-    /// Dispatch a request to the matching route
-    /// Tries each route in order until one matches
+    /// Dispatch a request to the matching route.
+    ///
+    /// Iterates through routes in order until one matches. If no route matches,
+    /// automatically returns a 404 "Not Found" response. Routes are matched by:
+    ///
+    /// 1. HTTP method (if specified)
+    /// 2. Path pattern (static segments, parameters, wildcards)
+    ///
+    /// **Important**: Routes are checked in order, so place more specific routes
+    /// before catch-all patterns.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const routes: []const Route = &.{
+    ///     Route.get("/users/:id", getUser),  // Specific route first
+    ///     Route.get("/users", listUsers),
+    ///     Route.all("/*", notFound),          // Catch-all last
+    /// };
+    ///
+    /// export fn handleFetch(ctx_id: u32) void {
+    ///     const ctx = FetchContext.init(ctx_id) catch return;
+    ///     Route.dispatch(routes, ctx);
+    /// }
+    /// ```
     pub fn dispatch(routes: []const Route, ctx: *FetchContext) void {
         const path = ctx.path;
         const method = ctx.req.method();
@@ -188,17 +519,51 @@ pub const Route = struct {
 // Path Matching
 // ============================================================================
 
-/// Match a pattern against a path, extracting parameters
-/// Returns Params if matched, null otherwise
+/// Match a route pattern against a request path, extracting parameters.
 ///
-/// Pattern syntax:
-///   - Static segments: /users, /api/v1
-///   - Named parameters: :id, :name (matches until next /)
-///   - Wildcards: *path (matches rest of path, must be last segment)
+/// This is the core matching function used internally by `Route.dispatch()`.
+/// You typically don't need to call this directly, but it's exported for
+/// testing and advanced use cases.
 ///
-/// Examples:
-///   "/users/:id" matches "/users/123" -> params.get("id") = "123"
-///   "/files/*path" matches "/files/a/b/c" -> params.get("*") = "a/b/c"
+/// Returns a `Params` struct with extracted parameters if the pattern matches,
+/// or `null` if there's no match.
+///
+/// ## Pattern Syntax
+///
+/// | Syntax | Description | Example |
+/// |--------|-------------|---------|
+/// | `/path` | Static segment | `/users`, `/api/v1` |
+/// | `:name` | Named parameter | `:id`, `:userId` |
+/// | `*` | Unnamed wildcard | `/files/*` |
+/// | `*name` | Named wildcard | `/static/*filepath` |
+///
+/// ## Matching Rules
+///
+/// - **Static segments** must match exactly
+/// - **Named parameters** (`:id`) match any single path segment (up to the next `/`)
+/// - **Wildcards** (`*` or `*name`) match the rest of the path and must be the last segment
+/// - The root pattern `/` only matches the exact path `/`
+///
+/// ## Examples
+///
+/// ```zig
+/// // Static matching
+/// matchPath("/users", "/users")           // matches, params.len = 0
+/// matchPath("/users", "/posts")           // null (no match)
+///
+/// // Named parameters
+/// matchPath("/users/:id", "/users/123")   // matches, params.get("id") = "123"
+/// matchPath("/users/:id", "/users")       // null (missing segment)
+///
+/// // Multiple parameters
+/// matchPath("/users/:userId/posts/:postId", "/users/42/posts/99")
+/// // matches, params.get("userId") = "42", params.get("postId") = "99"
+///
+/// // Wildcards
+/// matchPath("/files/*path", "/files/a/b/c")  // matches, params.get("path") = "a/b/c"
+/// matchPath("/files/*", "/files/readme.txt") // matches, params.wildcard() = "readme.txt"
+/// matchPath("/api/*", "/api")                // matches, wildcard = "" (empty)
+/// ```
 pub fn matchPath(pattern: []const u8, path: []const u8) ?Params {
     var params = Params{};
 

@@ -1,3 +1,47 @@
+//! Fetch handler context and response helpers.
+//!
+//! This module provides `FetchContext`, the main interface for handling
+//! HTTP requests in Cloudflare Workers. It includes ergonomic response
+//! helpers inspired by frameworks like Hono.
+//!
+//! ## Quick Start
+//!
+//! ```zig
+//! const workers = @import("cf-workerz");
+//! const FetchContext = workers.FetchContext;
+//!
+//! fn handleRequest(ctx: *FetchContext) void {
+//!     // Access route parameters
+//!     const id = ctx.param("id") orelse {
+//!         ctx.json(.{ .err = "Missing id" }, 400);
+//!         return;
+//!     };
+//!
+//!     // Parse JSON body
+//!     var json = ctx.bodyJson() orelse {
+//!         ctx.json(.{ .err = "Invalid JSON" }, 400);
+//!         return;
+//!     };
+//!     defer json.deinit();
+//!
+//!     const name = json.getString("name") orelse "anonymous";
+//!
+//!     // Send response
+//!     ctx.json(.{ .id = id, .name = name }, 200);
+//! }
+//! ```
+//!
+//! ## Response Helpers
+//!
+//! | Method | Description |
+//! |--------|-------------|
+//! | `json(value, status)` | JSON response with auto-serialization |
+//! | `text(body, status)` | Plain text response |
+//! | `html(body, status)` | HTML response |
+//! | `redirect(url, status)` | HTTP redirect |
+//! | `noContent()` | 204 No Content |
+//! | `throw(status, message)` | Error response |
+
 const std = @import("std");
 const allocator = std.heap.page_allocator;
 const common = @import("../bindings/common.zig");
@@ -16,8 +60,22 @@ const getObjectValue = @import("../bindings/object.zig").getObjectValue;
 const router = @import("../router.zig");
 const JsonBody = @import("json.zig").JsonBody;
 
-/// Common HTTP errors that map to status codes
-/// Use these with ctx.sendAuto(error.NotFound) for automatic status mapping
+/// Common HTTP errors that map to status codes.
+///
+/// Use these errors with `ctx.json(error.NotFound, 404)` for automatic
+/// JSON error responses in the format `{"error": "NotFound"}`.
+///
+/// ## Example
+///
+/// ```zig
+/// fn getUser(ctx: *FetchContext) void {
+///     const user = findUser(id) orelse {
+///         ctx.json(error.NotFound, 404);
+///         return;
+///     };
+///     ctx.json(user, 200);
+/// }
+/// ```
 pub const HttpError = error{
     BadRequest,
     Unauthorized,
@@ -35,7 +93,10 @@ pub const HttpError = error{
     ServiceUnavailable,
 };
 
-/// Map any error to an HTTP status code
+/// Map any error to an HTTP status code.
+///
+/// Known `HttpError` variants map to their corresponding status codes.
+/// Unknown errors default to 500 Internal Server Error.
 pub fn getErrorStatus(err: anyerror) StatusCode {
     return switch (err) {
         error.BadRequest => .BadRequest,
@@ -73,8 +134,10 @@ pub fn isComptimeString(comptime T: type) bool {
     return child_info.array.child == u8;
 }
 
-/// Handler function type - synchronous since Zig 0.11+ removed async
-/// The JS runtime handles async operations via Promises
+/// Handler function signature for route handlers.
+///
+/// All route handlers receive a `*FetchContext` and return void.
+/// Responses are sent via context methods like `json()`, `text()`, etc.
 pub const HandlerFn = *const fn (ctx: *FetchContext) void;
 
 pub const Route = struct {
@@ -83,6 +146,55 @@ pub const Route = struct {
     handle: HandlerFn,
 };
 
+/// The request context for handling HTTP fetch events.
+///
+/// `FetchContext` is the primary interface for handling requests in a
+/// Cloudflare Worker. It provides access to the request, environment
+/// bindings, and helper methods for sending responses.
+///
+/// ## Key Properties
+///
+/// - `req`: The incoming `Request` object
+/// - `env`: Environment bindings (KV, D1, R2, etc.)
+/// - `path`: The URL path of the request
+/// - `params`: Route parameters extracted by the router
+///
+/// ## Request Helpers
+///
+/// - `param(name)`: Get a route parameter (shorthand for `params.get()`)
+/// - `bodyJson()`: Parse request body as JSON
+///
+/// ## Response Helpers
+///
+/// - `json(value, status)`: Send JSON response
+/// - `text(body, status)`: Send plain text response
+/// - `html(body, status)`: Send HTML response
+/// - `redirect(url, status)`: Send redirect response
+/// - `noContent()`: Send 204 No Content
+/// - `throw(status, message)`: Send error response
+///
+/// ## Example
+///
+/// ```zig
+/// fn handleUser(ctx: *FetchContext) void {
+///     const id = ctx.param("id") orelse {
+///         ctx.json(.{ .err = "Missing id" }, 400);
+///         return;
+///     };
+///
+///     const db = ctx.env.d1("DB") orelse {
+///         ctx.throw(500, "DB not configured");
+///         return;
+///     };
+///     defer db.free();
+///
+///     if (db.one(User, "SELECT * FROM users WHERE id = ?", .{id})) |user| {
+///         ctx.json(.{ .name = user.name }, 200);
+///     } else {
+///         ctx.json(error.NotFound, 404);
+///     }
+/// }
+/// ```
 pub const FetchContext = struct {
     id: u32,
     req: Request,
@@ -92,6 +204,9 @@ pub const FetchContext = struct {
     params: router.Params = .{}, // Route parameters (populated by Router)
     responded: bool = false, // Track if response was sent (for router)
 
+    /// Initialize a new FetchContext from a JS context ID.
+    ///
+    /// This is called by the runtime; you typically don't call this directly.
     pub fn init(id: u32) !*FetchContext {
         const ctx = try allocator.create(FetchContext);
         errdefer allocator.destroy(ctx);
@@ -107,6 +222,10 @@ pub const FetchContext = struct {
         return ctx;
     }
 
+    /// Clean up the context and free associated resources.
+    ///
+    /// This is called automatically when you send a response.
+    /// You typically don't need to call this directly.
     pub fn deinit(self: *FetchContext) void {
         self.req.free();
         self.env.free();
@@ -115,6 +234,17 @@ pub const FetchContext = struct {
         allocator.destroy(self);
     }
 
+    /// Send an error response with the given status code and message.
+    ///
+    /// Use this for error responses when you want to send a plain text
+    /// error message. For JSON error responses, use `json()` instead.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// ctx.throw(500, "Internal server error");
+    /// ctx.throw(404, "Resource not found");
+    /// ```
     pub fn throw(self: *FetchContext, status: u16, msg: []const u8) void {
         const statusText = @as(StatusCode, @enumFromInt(status)).toString();
 
@@ -128,6 +258,10 @@ pub const FetchContext = struct {
         self.send(&res);
     }
 
+    /// Send a raw Response object to the client.
+    ///
+    /// This is a low-level method. Prefer using `json()`, `text()`, or
+    /// other helper methods for common response types.
     pub fn send(self: *FetchContext, res: *const Response) void {
         self.responded = true;
         defer self.deinit();
@@ -140,20 +274,26 @@ pub const FetchContext = struct {
     // ========================================================================
 
     /// Parse the request body as JSON and return a JsonBody helper.
-    /// Returns null if the body is missing, empty, or invalid JSON.
     ///
-    /// Example:
-    /// ```
+    /// Returns null if the body is missing, empty, or invalid JSON.
+    /// The returned `JsonBody` provides convenient methods for extracting
+    /// typed values from the JSON.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
     /// var json = ctx.bodyJson() orelse {
-    ///     ctx.json(.{ .@"error" = "Invalid JSON body" }, 400);
+    ///     ctx.json(.{ .err = "Invalid JSON body" }, 400);
     ///     return;
     /// };
     /// defer json.deinit();
     ///
     /// const title = json.getString("title") orelse {
-    ///     ctx.json(.{ .@"error" = "Title is required" }, 400);
+    ///     ctx.json(.{ .err = "Title is required" }, 400);
     ///     return;
     /// };
+    /// const count = json.getInt("count", u32) orelse 0;
+    /// const active = json.getBool("active") orelse true;
     /// const description = json.getStringOr("description", "");
     /// ```
     pub fn bodyJson(self: *FetchContext) ?JsonBody {
@@ -161,13 +301,21 @@ pub const FetchContext = struct {
         return JsonBody.parse(allocator, body);
     }
 
-    /// Shorthand for ctx.params.get(name).
-    /// Equivalent to Hono's c.req.param("name").
+    /// Get a route parameter by name.
     ///
-    /// Example:
-    /// ```
-    /// const id = ctx.param("id") orelse {
-    ///     ctx.json(.{ .@"error" = "Missing id parameter" }, 400);
+    /// Shorthand for `ctx.params.get(name)`. Returns the parameter value
+    /// or null if not found.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // For route "/users/:id/posts/:postId"
+    /// const userId = ctx.param("id") orelse {
+    ///     ctx.json(.{ .err = "Missing user id" }, 400);
+    ///     return;
+    /// };
+    /// const postId = ctx.param("postId") orelse {
+    ///     ctx.json(.{ .err = "Missing post id" }, 400);
     ///     return;
     /// };
     /// ```
@@ -180,17 +328,31 @@ pub const FetchContext = struct {
     // ========================================================================
 
     /// Send a JSON response with the given status code.
-    /// Accepts any type and auto-serializes:
-    /// - []const u8 / string literal: treated as raw JSON string (backward compatible)
-    /// - struct: serialized to JSON
-    /// - error: serialized as {"error": "ErrorName"}
     ///
-    /// Example:
-    /// ```
-    /// ctx.json(.{ .id = 1, .name = "Alice" }, 200);  // struct -> JSON
-    /// ctx.json(user, 201);                            // named struct -> JSON
-    /// ctx.json("{\"raw\":true}", 200);                // raw JSON string
-    /// ctx.json(error.NotFound, 404);                  // -> {"error": "NotFound"}
+    /// Accepts any type and auto-serializes:
+    /// - **Structs**: Serialized to JSON object
+    /// - **Anonymous structs**: Serialized to JSON object
+    /// - **Strings**: Treated as raw JSON (no additional serialization)
+    /// - **Errors**: Serialized as `{"error": "ErrorName"}`
+    ///
+    /// ## Examples
+    ///
+    /// ```zig
+    /// // Anonymous struct
+    /// ctx.json(.{ .id = 1, .name = "Alice" }, 200);
+    ///
+    /// // Named struct
+    /// const user = User{ .id = 1, .name = "Alice" };
+    /// ctx.json(user, 201);
+    ///
+    /// // Raw JSON string (passed through as-is)
+    /// ctx.json("{\"raw\":true}", 200);
+    ///
+    /// // Error -> {"error": "NotFound"}
+    /// ctx.json(error.NotFound, 404);
+    ///
+    /// // Array
+    /// ctx.json(.{ .items = users }, 200);
     /// ```
     pub fn json(self: *FetchContext, value: anytype, status: u16) void {
         const T = @TypeOf(value);
@@ -247,7 +409,16 @@ pub const FetchContext = struct {
         self.send(&res);
     }
 
-    /// Send a plain text response with the given status code
+    /// Send a plain text response with the given status code.
+    ///
+    /// Sets `Content-Type: text/plain; charset=utf-8`.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// ctx.text("Hello, World!", 200);
+    /// ctx.text("Resource created", 201);
+    /// ```
     pub fn text(self: *FetchContext, body: []const u8, status: u16) void {
         const statusText = @as(StatusCode, @enumFromInt(status)).toString();
 
@@ -267,7 +438,16 @@ pub const FetchContext = struct {
         self.send(&res);
     }
 
-    /// Send an HTML response with the given status code
+    /// Send an HTML response with the given status code.
+    ///
+    /// Sets `Content-Type: text/html; charset=utf-8`.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// ctx.html("<h1>Hello, World!</h1>", 200);
+    /// ctx.html("<html><body>Welcome</body></html>", 200);
+    /// ```
     pub fn html(self: *FetchContext, body: []const u8, status: u16) void {
         const statusText = @as(StatusCode, @enumFromInt(status)).toString();
 
@@ -287,7 +467,21 @@ pub const FetchContext = struct {
         self.send(&res);
     }
 
-    /// Send a redirect response (302 by default)
+    /// Send an HTTP redirect response.
+    ///
+    /// Sets the `Location` header to the specified URL. Common status
+    /// codes are 301 (permanent), 302 (temporary), 307 (temporary, preserve method),
+    /// and 308 (permanent, preserve method).
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // Temporary redirect (302)
+    /// ctx.redirect("/new-location", 302);
+    ///
+    /// // Permanent redirect (301)
+    /// ctx.redirect("https://example.com/moved", 301);
+    /// ```
     pub fn redirect(self: *FetchContext, url: []const u8, status: u16) void {
         const actual_status = if (status == 0) @as(u16, 302) else status;
         const statusText = @as(StatusCode, @enumFromInt(actual_status)).toString();
@@ -305,7 +499,20 @@ pub const FetchContext = struct {
         self.send(&res);
     }
 
-    /// Send a 204 No Content response
+    /// Send a 204 No Content response.
+    ///
+    /// Use this when the request was successful but there's no content
+    /// to return, such as after a DELETE operation.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// fn deleteUser(ctx: *FetchContext) void {
+    ///     const id = ctx.param("id") orelse return;
+    ///     _ = db.execute("DELETE FROM users WHERE id = ?", .{id});
+    ///     ctx.noContent();
+    /// }
+    /// ```
     pub fn noContent(self: *FetchContext) void {
         const res = Response.new(
             .{ .none = {} },

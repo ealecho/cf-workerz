@@ -1,3 +1,63 @@
+//! Cloudflare D1 - Serverless SQLite database.
+//!
+//! D1 is Cloudflare's native serverless SQL database built on SQLite.
+//! It provides familiar SQL semantics with global distribution and
+//! automatic replication.
+//!
+//! ## Quick Start
+//!
+//! ```zig
+//! fn handleDB(ctx: *FetchContext) void {
+//!     const db = ctx.env.d1("MY_DB") orelse {
+//!         ctx.throw(500, "D1 not configured");
+//!         return;
+//!     };
+//!     defer db.free();
+//!
+//!     // Ergonomic API (recommended)
+//!     const User = struct { id: u32, name: []const u8, email: []const u8 };
+//!
+//!     // Query multiple rows
+//!     var users = db.query(User, "SELECT * FROM users WHERE active = ?", .{true});
+//!     defer users.deinit();
+//!     while (users.next()) |user| {
+//!         // user.id, user.name, user.email - fully typed!
+//!     }
+//!
+//!     // Query single row
+//!     if (db.one(User, "SELECT * FROM users WHERE id = ?", .{123})) |user| {
+//!         ctx.json(.{ .id = user.id, .name = user.name }, 200);
+//!         return;
+//!     }
+//!
+//!     // Execute INSERT/UPDATE/DELETE
+//!     const affected = db.execute("DELETE FROM users WHERE active = ?", .{false});
+//!     ctx.json(.{ .deleted = affected }, 200);
+//! }
+//! ```
+//!
+//! ## Configuration
+//!
+//! Add to your `wrangler.toml`:
+//!
+//! ```toml
+//! [[d1_databases]]
+//! binding = "MY_DB"
+//! database_id = "your-database-id"
+//! database_name = "my-database"
+//! ```
+//!
+//! ## Supported Parameter Types
+//!
+//! | Zig Type | SQL Type |
+//! |----------|----------|
+//! | `i32`, `u32`, `i64`, `u64` | INTEGER |
+//! | `f32`, `f64` | REAL |
+//! | `bool` | INTEGER (0/1) |
+//! | `[]const u8` | TEXT |
+//! | `null` | NULL |
+//! | `?T` (optionals) | NULL or T |
+
 const std = @import("std");
 const common = @import("../bindings/common.zig");
 const jsFree = common.jsFree;
@@ -16,7 +76,47 @@ const function = @import("../bindings/function.zig");
 const Function = function.Function;
 const AsyncFunction = function.AsyncFunction;
 
-// workers-types TO BE ADDED
+/// Cloudflare D1 Database handle.
+///
+/// D1Database provides access to Cloudflare's serverless SQLite database.
+/// It supports both an ergonomic high-level API (`query`, `one`, `execute`)
+/// and a lower-level prepared statement API.
+///
+/// ## Ergonomic API (Recommended)
+///
+/// ```zig
+/// const User = struct { id: u32, name: []const u8, email: []const u8 };
+///
+/// // Query multiple rows -> iterator
+/// var users = db.query(User, "SELECT * FROM users WHERE active = ?", .{true});
+/// defer users.deinit();
+/// while (users.next()) |user| {
+///     // user.id, user.name, user.email - fully typed!
+/// }
+///
+/// // Query single row -> ?T
+/// if (db.one(User, "SELECT * FROM users WHERE id = ?", .{123})) |user| {
+///     ctx.json(.{ .name = user.name }, 200);
+/// }
+///
+/// // Execute INSERT/UPDATE/DELETE -> affected rows count
+/// const deleted = db.execute("DELETE FROM users WHERE active = ?", .{false});
+/// ```
+///
+/// ## Prepared Statement API (Lower-level)
+///
+/// ```zig
+/// const stmt = db.prepare("SELECT * FROM users WHERE id = ?");
+/// defer stmt.free();
+///
+/// const args = workers.Array.new();
+/// defer args.free();
+/// args.pushNum(u32, 123);
+///
+/// const bound = stmt.bind(&args);
+/// const result = bound.all();
+/// defer result.free();
+/// ```
 pub const D1Database = struct {
     id: u32,
 
@@ -28,6 +128,26 @@ pub const D1Database = struct {
         jsFree(self.id);
     }
 
+    /// Create a prepared statement for the given SQL query.
+    ///
+    /// Prepared statements allow you to bind parameters and execute
+    /// queries safely. For most use cases, prefer the ergonomic API
+    /// (`query`, `one`, `execute`) instead.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const stmt = db.prepare("SELECT * FROM users WHERE role = ?");
+    /// defer stmt.free();
+    ///
+    /// const args = workers.Array.new();
+    /// defer args.free();
+    /// args.pushText("admin");
+    ///
+    /// const bound = stmt.bind(&args);
+    /// const result = bound.all();
+    /// defer result.free();
+    /// ```
     pub fn prepare(self: *const D1Database, text: []const u8) PreparedStatement {
         const str = String.new(text);
         defer str.free();
@@ -37,7 +157,13 @@ pub const D1Database = struct {
         return PreparedStatement.init(func.callArgs(&str));
     }
 
-    /// Dump the database - synchronous from Zig's perspective, JS handles async
+    /// Dump the entire database as an ArrayBuffer.
+    ///
+    /// Returns a raw SQLite database file that can be used for backups
+    /// or transferring to another D1 instance.
+    ///
+    /// Note: This is synchronous from Zig's perspective; the JS runtime
+    /// handles the async operation via JSPI.
     pub fn dump(self: *const D1Database) ArrayBuffer {
         const func = AsyncFunction{ .id = getObjectValue(self.id, "dump") };
         defer func.free();
@@ -45,7 +171,20 @@ pub const D1Database = struct {
         return ArrayBuffer.init(func.call());
     }
 
-    /// Execute a query - synchronous from Zig's perspective, JS handles async
+    /// Execute raw SQL directly without parameter binding.
+    ///
+    /// Use this for running multiple statements or DDL commands.
+    /// For parameterized queries, use `prepare()` or the ergonomic API instead.
+    ///
+    /// Note: This is synchronous from Zig's perspective; the JS runtime
+    /// handles the async operation via JSPI.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const result = db.exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)");
+    /// defer result.free();
+    /// ```
     pub fn exec(self: *const D1Database, sql_query: []const u8) Object {
         const str = String.new(sql_query);
         defer str.free();
@@ -55,7 +194,24 @@ pub const D1Database = struct {
         return Object.init(func.callArgsID(str.id));
     }
 
-    /// Execute a batch of statements - synchronous from Zig's perspective, JS handles async
+    /// Execute multiple prepared statements in a single batch.
+    ///
+    /// Batching is more efficient than executing statements individually
+    /// as it reduces round-trips to the database.
+    ///
+    /// Note: This is synchronous from Zig's perspective; the JS runtime
+    /// handles the async operation via JSPI.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const stmts = [_]PreparedStatement{
+    ///     db.prepare("INSERT INTO users (name) VALUES (?)"),
+    ///     db.prepare("INSERT INTO users (name) VALUES (?)"),
+    /// };
+    /// const results = db.batch(&stmts);
+    /// defer results.free();
+    /// ```
     pub fn batch(self: *const D1Database, stmts: []const PreparedStatement) BatchSQLSuccess {
         const arr = Array.new();
         defer arr.free();
@@ -77,14 +233,29 @@ pub const D1Database = struct {
     // Ergonomic Query API (pg.zig-inspired)
     // ========================================================================
 
-    /// Query with inline params, returns an iterator of mapped structs.
-    /// Usage:
-    ///   const User = struct { id: u32, name: []const u8, email: []const u8 };
-    ///   var users = db.query(User, "SELECT * FROM users WHERE role = ?", .{"admin"});
-    ///   defer users.deinit();
-    ///   while (users.next()) |user| {
-    ///       // user.id, user.name, user.email - fully typed!
-    ///   }
+    /// Query multiple rows and return a typed iterator.
+    ///
+    /// This is the recommended way to query data from D1. The result rows
+    /// are automatically mapped to the specified struct type `T`.
+    ///
+    /// ## Parameters
+    ///
+    /// - `T`: The struct type to map each row to. Field names must match column names.
+    /// - `sql`: The SQL query with `?` placeholders for parameters.
+    /// - `params`: A tuple of parameter values to bind (supports int, float, bool, string, null, optional).
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const User = struct { id: u32, name: []const u8, email: []const u8, active: bool };
+    ///
+    /// var users = db.query(User, "SELECT * FROM users WHERE role = ?", .{"admin"});
+    /// defer users.deinit();
+    ///
+    /// while (users.next()) |user| {
+    ///     // user.id, user.name, user.email, user.active - all typed!
+    /// }
+    /// ```
     pub fn query(self: *const D1Database, comptime T: type, sql: []const u8, params: anytype) D1Query(T) {
         const stmt = self.prepare(sql);
         const bound = bindParams(&stmt, params);
@@ -92,21 +263,60 @@ pub const D1Database = struct {
         return D1Query(T){ .sql_success = result, .results = result.results() };
     }
 
-    /// Query for a single row, returns the struct or null if not found.
-    /// Usage:
-    ///   const user = db.one(User, "SELECT * FROM users WHERE id = ?", .{123});
-    ///   if (user) |u| {
-    ///       // use u.id, u.name, etc.
-    ///   }
+    /// Query for a single row and return the mapped struct or null.
+    ///
+    /// This is a convenience method for queries that expect exactly one result,
+    /// such as lookups by primary key.
+    ///
+    /// ## Parameters
+    ///
+    /// - `T`: The struct type to map the row to.
+    /// - `sql`: The SQL query with `?` placeholders.
+    /// - `params`: A tuple of parameter values to bind.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const User = struct { id: u32, name: []const u8, email: []const u8 };
+    ///
+    /// if (db.one(User, "SELECT * FROM users WHERE id = ?", .{user_id})) |user| {
+    ///     ctx.json(.{ .name = user.name, .email = user.email }, 200);
+    /// } else {
+    ///     ctx.json(.{ .err = "User not found" }, 404);
+    /// }
+    /// ```
     pub fn one(self: *const D1Database, comptime T: type, sql: []const u8, params: anytype) ?T {
         var q = self.query(T, sql, params);
         defer q.deinit();
         return q.next();
     }
 
-    /// Execute INSERT/UPDATE/DELETE and return the number of affected rows.
-    /// Usage:
-    ///   const affected = db.execute("DELETE FROM users WHERE active = ?", .{false});
+    /// Execute an INSERT, UPDATE, or DELETE statement and return affected row count.
+    ///
+    /// Use this for write operations that don't return data.
+    ///
+    /// ## Parameters
+    ///
+    /// - `sql`: The SQL statement with `?` placeholders.
+    /// - `params`: A tuple of parameter values to bind.
+    ///
+    /// ## Returns
+    ///
+    /// The number of rows affected by the operation.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // Insert a new user
+    /// _ = db.execute("INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email });
+    ///
+    /// // Update users
+    /// const updated = db.execute("UPDATE users SET active = ? WHERE role = ?", .{ true, "admin" });
+    ///
+    /// // Delete inactive users
+    /// const deleted = db.execute("DELETE FROM users WHERE active = ?", .{false});
+    /// ctx.json(.{ .deleted = deleted }, 200);
+    /// ```
     pub fn execute(self: *const D1Database, sql: []const u8, params: anytype) u64 {
         const stmt = self.prepare(sql);
         const bound = bindParams(&stmt, params);
@@ -116,6 +326,25 @@ pub const D1Database = struct {
     }
 };
 
+/// Result from a batch of SQL statements.
+///
+/// Contains an array of `SQLSuccess` results, one for each statement
+/// in the batch. Use `results()` to iterate over individual statement results.
+///
+/// ## Example
+///
+/// ```zig
+/// const batch_result = db.batch(&statements);
+/// defer batch_result.free();
+///
+/// if (batch_result.results()) |results| {
+///     defer results.free();
+///     while (results.next()) |sql_result| {
+///         const changes = sql_result.changes();
+///         // process each statement's result
+///     }
+/// }
+/// ```
 pub const BatchSQLSuccess = struct {
     id: u32,
 
@@ -159,6 +388,34 @@ pub const BatchSQLSuccess = struct {
     }
 };
 
+/// Result from a single SQL statement execution.
+///
+/// Contains the query results (for SELECT), metadata about affected rows,
+/// last inserted row ID, and query duration.
+///
+/// ## Accessing Results
+///
+/// ```zig
+/// const result = stmt.all();
+/// defer result.free();
+///
+/// // Check if query succeeded
+/// if (result.success()) {
+///     // Get metadata
+///     const changes = result.changes();       // rows affected
+///     const last_id = result.lastRowId();     // last INSERT rowid
+///     const duration = result.duration();     // query time in ms
+///
+///     // Iterate over result rows
+///     if (result.results()) |rows| {
+///         defer rows.free();
+///         while (rows.next(Object)) |row| {
+///             defer row.free();
+///             // process row
+///         }
+///     }
+/// }
+/// ```
 pub const SQLSuccess = struct {
     id: u32,
 
@@ -239,6 +496,44 @@ pub const SQLSuccess = struct {
     }
 };
 
+/// A prepared SQL statement ready for parameter binding and execution.
+///
+/// Prepared statements allow you to safely bind parameters and execute
+/// queries. They provide protection against SQL injection.
+///
+/// For most use cases, prefer the ergonomic API on `D1Database`
+/// (`query`, `one`, `execute`) which handles binding automatically.
+///
+/// ## Workflow
+///
+/// 1. Create with `db.prepare(sql)`
+/// 2. Bind parameters with `stmt.bind(&args)`
+/// 3. Execute with `first()`, `all()`, `raw()`, or `run()`
+/// 4. Process results and free resources
+///
+/// ## Example
+///
+/// ```zig
+/// const stmt = db.prepare("SELECT * FROM users WHERE role = ? AND active = ?");
+/// defer stmt.free();
+///
+/// const args = workers.Array.new();
+/// defer args.free();
+/// args.pushText("admin");
+/// args.pushNum(i64, 1); // boolean as 0/1
+///
+/// const bound = stmt.bind(&args);
+/// const result = bound.all();
+/// defer result.free();
+///
+/// if (result.results()) |rows| {
+///     defer rows.free();
+///     while (rows.next(Object)) |row| {
+///         defer row.free();
+///         // process row
+///     }
+/// }
+/// ```
 pub const PreparedStatement = struct {
     id: u32,
 
@@ -250,6 +545,7 @@ pub const PreparedStatement = struct {
         jsFree(self.id);
     }
 
+    /// Get the SQL statement text.
     pub fn statement(self: *const PreparedStatement) []const u8 {
         return getStringFree(getObjectValue(self.id, "statement"));
     }
@@ -283,6 +579,22 @@ pub const PreparedStatement = struct {
         return ParamsList.init(getObjectValue(self.id, "params"));
     }
 
+    /// Bind parameters to the prepared statement.
+    ///
+    /// Returns a new `PreparedStatement` with the bound parameters,
+    /// ready for execution.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const args = workers.Array.new();
+    /// defer args.free();
+    /// args.pushText("admin");
+    /// args.pushNum(u32, 123);
+    ///
+    /// const bound = stmt.bind(&args);
+    /// const result = bound.all();
+    /// ```
     pub fn bind(self: *const PreparedStatement, input: *const Array) PreparedStatement { // input Array<any>
         const func = AsyncFunction{ .id = getObjectValue(self.id, "bind") };
         defer func.free();
@@ -290,7 +602,24 @@ pub const PreparedStatement = struct {
         return PreparedStatement.init(func.callArgsID(input.id));
     }
 
-    /// Get first row - synchronous from Zig's perspective, JS handles async
+    /// Execute the query and return only the first row.
+    ///
+    /// Optionally specify a column name to return just that column's value.
+    /// If no rows match, the returned Object will be empty.
+    ///
+    /// Note: This frees the PreparedStatement after execution.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const row = bound.first(null);
+    /// defer row.free();
+    /// // Access row fields...
+    ///
+    /// // Or get a specific column:
+    /// const name = bound.first("name");
+    /// defer name.free();
+    /// ```
     pub fn first(self: *const PreparedStatement, column: ?[]const u8) Object {
         defer self.free();
         const func = AsyncFunction{ .id = getObjectValue(self.id, "first") };
@@ -305,7 +634,27 @@ pub const PreparedStatement = struct {
         }
     }
 
-    /// Get all rows - synchronous from Zig's perspective, JS handles async
+    /// Execute the query and return all matching rows.
+    ///
+    /// Returns a `SQLSuccess` containing the result set and metadata.
+    /// Use `results()` on the returned value to iterate over rows.
+    ///
+    /// Note: This frees the PreparedStatement after execution.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const result = bound.all();
+    /// defer result.free();
+    ///
+    /// if (result.results()) |rows| {
+    ///     defer rows.free();
+    ///     while (rows.next(Object)) |row| {
+    ///         defer row.free();
+    ///         // process row
+    ///     }
+    /// }
+    /// ```
     pub fn all(self: *const PreparedStatement) SQLSuccess { // SQLSuccess<Array<Object>>
         defer self.free();
         const func = AsyncFunction{ .id = getObjectValue(self.id, "all") };
@@ -314,7 +663,12 @@ pub const PreparedStatement = struct {
         return SQLSuccess.init(func.call());
     }
 
-    /// Get raw results - synchronous from Zig's perspective, JS handles async
+    /// Execute the query and return raw array results.
+    ///
+    /// Returns results as arrays rather than objects, which can be
+    /// more efficient when you know the column order.
+    ///
+    /// Note: This frees the PreparedStatement after execution.
     pub fn raw(self: *const PreparedStatement) Array { // Array<T>
         defer self.free();
         const func = AsyncFunction{ .id = getObjectValue(self.id, "raw") };
@@ -323,7 +677,22 @@ pub const PreparedStatement = struct {
         return Array.init(func.call());
     }
 
-    /// Run statement - synchronous from Zig's perspective, JS handles async
+    /// Execute an INSERT, UPDATE, or DELETE statement.
+    ///
+    /// Use this for write operations that don't need to return data rows.
+    /// The returned `SQLSuccess` contains metadata like `changes()` and `lastRowId()`.
+    ///
+    /// Note: This frees the PreparedStatement after execution.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const result = bound.run();
+    /// defer result.free();
+    ///
+    /// const rows_affected = result.changes();
+    /// const inserted_id = result.lastRowId();
+    /// ```
     pub fn run(self: *const PreparedStatement) SQLSuccess { // SQLSuccess<void> [no results returned]
         defer self.free();
         const func = AsyncFunction{ .id = getObjectValue(self.id, "run") };
@@ -337,13 +706,27 @@ pub const PreparedStatement = struct {
 // Ergonomic Query API (pg.zig-inspired)
 // ============================================================================
 
-/// Generic iterator that maps D1 result rows to Zig structs.
-/// Usage:
-///   var users = db.query(User, "SELECT * FROM users WHERE role = ?", .{"admin"});
-///   defer users.deinit();
-///   while (users.next()) |user| {
-///       // user.id, user.name, user.email - fully typed!
-///   }
+/// Typed iterator for D1 query results.
+///
+/// Maps D1 result rows to Zig structs automatically. Created by
+/// `D1Database.query()`.
+///
+/// ## Example
+///
+/// ```zig
+/// const User = struct { id: u32, name: []const u8, email: []const u8 };
+///
+/// var users = db.query(User, "SELECT * FROM users WHERE active = ?", .{true});
+/// defer users.deinit();
+///
+/// // Get total count
+/// const total = users.count();
+///
+/// // Iterate over results
+/// while (users.next()) |user| {
+///     // user.id, user.name, user.email - fully typed!
+/// }
+/// ```
 pub fn D1Query(comptime T: type) type {
     return struct {
         results: ?SQLSuccess.SQLSuccessResults,
