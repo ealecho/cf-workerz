@@ -9,3 +9,11 @@ command = "zig build"
 [[rules]]
 type = "CompiledWasm"
 globs = ["**/*.wasm"]
+
+# D1 Database binding for ergonomic API demo
+# Run: npx wrangler d1 create hello-world-db
+# Then update the database_id below
+[[d1_databases]]
+binding = "DB"
+database_name = "hello-world-db"
+database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
