@@ -20,8 +20,19 @@ pub const trace = fetch.trace;
 pub const patch = fetch.patch;
 pub const custom = fetch.custom;
 
+// Response helpers
+pub const HttpError = fetch.HttpError;
+pub const getErrorStatus = fetch.getErrorStatus;
+pub const isStringType = fetch.isStringType;
+pub const isComptimeString = fetch.isComptimeString;
+
 // Schedule handler types
 const schedule = @import("schedule.zig");
 pub const ScheduleFn = schedule.ScheduleFn;
 pub const ScheduledEvent = schedule.ScheduledEvent;
 pub const ScheduledContext = schedule.ScheduledContext;
+
+// Import tests
+test {
+    _ = fetch;
+}
