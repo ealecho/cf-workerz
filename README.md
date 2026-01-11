@@ -1098,6 +1098,95 @@ binding = "AI"
 
 ## Additional APIs
 
+### JsonBody (Request Parsing)
+
+The `JsonBody` helper provides Hono-style ergonomic JSON request parsing:
+
+```zig
+const workers = @import("cf-workerz");
+
+fn handleCreateUser(ctx: *workers.FetchContext) void {
+    // Parse request body as JSON
+    var json = ctx.bodyJson() orelse {
+        ctx.json(.{ .@"error" = "Invalid JSON body" }, 400);
+        return;
+    };
+    defer json.deinit();
+    
+    // Get required string field
+    const name = json.getString("name") orelse {
+        ctx.json(.{ .@"error" = "Name is required" }, 400);
+        return;
+    };
+    
+    // Get optional string with default
+    const role = json.getStringOr("role", "user");
+    
+    // Get typed numbers
+    const age = json.getInt("age", u32) orelse 0;
+    const score = json.getFloat("score", f64) orelse 0.0;
+    
+    // Get boolean
+    const active = json.getBool("active") orelse true;
+    
+    // Check if field exists
+    if (json.has("metadata")) {
+        // Get nested object
+        if (json.getObject("metadata")) |metadata| {
+            // metadata is std.json.ObjectMap
+            _ = metadata;
+        }
+    }
+    
+    // Get array field
+    if (json.getArray("tags")) |tags| {
+        // tags is []const std.json.Value
+        for (tags) |tag| {
+            if (tag == .string) {
+                const tag_str = tag.string;
+                _ = tag_str;
+            }
+        }
+    }
+    
+    ctx.json(.{ 
+        .name = name, 
+        .role = role, 
+        .age = age,
+        .active = active 
+    }, 201);
+}
+```
+
+**JsonBody Methods:**
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `getString(key)` | `?[]const u8` | Get string or null |
+| `getStringOr(key, default)` | `[]const u8` | Get string or default |
+| `getInt(key, T)` | `?T` | Get integer of type T |
+| `getIntOr(key, T, default)` | `T` | Get integer or default |
+| `getFloat(key, T)` | `?T` | Get float of type T |
+| `getFloatOr(key, T, default)` | `T` | Get float or default |
+| `getBool(key)` | `?bool` | Get boolean or null |
+| `getBoolOr(key, default)` | `bool` | Get boolean or default |
+| `getObject(key)` | `?ObjectMap` | Get nested object |
+| `getArray(key)` | `?[]Value` | Get array |
+| `has(key)` | `bool` | Check if key exists |
+| `get(key)` | `?Value` | Get raw JSON value |
+| `deinit()` | `void` | Free parsed JSON |
+
+**FetchContext Helpers:**
+
+```zig
+// Parse body as JSON (combines req.text() + JsonBody.parse())
+var json = ctx.bodyJson() orelse return;
+defer json.deinit();
+
+// Shorthand for ctx.params.get(name)
+const id = ctx.param("id") orelse return;
+```
+
 ### Headers
 
 ```zig
