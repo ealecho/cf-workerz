@@ -138,11 +138,58 @@ pub const FetchContext = struct {
     // Response Helpers
     // ========================================================================
 
-    /// Send a JSON response with the given status code
-    pub fn json(self: *FetchContext, body: []const u8, status: u16) void {
+    /// Send a JSON response with the given status code.
+    /// Accepts any type and auto-serializes:
+    /// - []const u8 / string literal: treated as raw JSON string (backward compatible)
+    /// - struct: serialized to JSON
+    /// - error: serialized as {"error": "ErrorName"}
+    ///
+    /// Example:
+    /// ```
+    /// ctx.json(.{ .id = 1, .name = "Alice" }, 200);  // struct -> JSON
+    /// ctx.json(user, 201);                            // named struct -> JSON
+    /// ctx.json("{\"raw\":true}", 200);                // raw JSON string
+    /// ctx.json(error.NotFound, 404);                  // -> {"error": "NotFound"}
+    /// ```
+    pub fn json(self: *FetchContext, value: anytype, status: u16) void {
+        const T = @TypeOf(value);
+        const type_info = @typeInfo(T);
         const statusText = @as(StatusCode, @enumFromInt(status)).toString();
 
-        const body_str = String.new(body);
+        // Determine the JSON body bytes
+        var buf: [4096]u8 = undefined;
+        const json_bytes: []const u8 = blk: {
+            // Handle raw string slices ([]const u8, []u8) - treat as raw JSON
+            if (comptime isStringType(T)) {
+                break :blk value;
+            }
+
+            // Handle comptime string literals (*const [N]u8) - treat as raw JSON
+            if (comptime isComptimeString(T)) {
+                break :blk value;
+            }
+
+            // Handle error types -> {"error": "ErrorName"}
+            if (type_info == .error_set) {
+                const error_name = @errorName(value);
+                var writer: std.Io.Writer = .fixed(&buf);
+                std.json.Stringify.value(.{ .@"error" = error_name }, .{}, &writer) catch {
+                    self.throw(500, "JSON serialization failed");
+                    return;
+                };
+                break :blk buf[0..writer.end];
+            }
+
+            // Handle everything else (structs, arrays, etc.) -> JSON serialize
+            var writer: std.Io.Writer = .fixed(&buf);
+            std.json.Stringify.value(value, .{}, &writer) catch {
+                self.throw(500, "JSON serialization failed");
+                return;
+            };
+            break :blk buf[0..writer.end];
+        };
+
+        const body_str = String.new(json_bytes);
         defer body_str.free();
 
         const headers = Headers.new();
@@ -222,135 +269,6 @@ pub const FetchContext = struct {
         const res = Response.new(
             .{ .none = {} },
             .{ .status = 204, .statusText = "No Content" },
-        );
-        defer res.free();
-
-        self.send(&res);
-    }
-
-    // ========================================================================
-    // Tokamak-style Response Helpers (auto-detection)
-    // ========================================================================
-
-    /// Send a response with automatic type detection and 200 OK status:
-    /// - void / empty struct: 204 No Content
-    /// - []const u8 / string: text/plain response
-    /// - error: auto-mapped to HTTP status with JSON error body
-    /// - struct/other: JSON serialized
-    ///
-    /// Example:
-    /// ```
-    /// ctx.sendAuto(.{ .id = 1, .name = "Alice" });  // 200 JSON
-    /// ctx.sendAuto("Hello");                         // 200 text
-    /// ctx.sendAuto(error.NotFound);                  // 404 JSON error
-    /// ctx.sendAuto({});                              // 204 No Content
-    /// ```
-    pub fn sendAuto(self: *FetchContext, value: anytype) void {
-        self.sendAutoStatus(value, .Ok);
-    }
-
-    /// Send a response with automatic type detection and explicit status code.
-    ///
-    /// Example:
-    /// ```
-    /// ctx.sendAutoStatus(.{ .id = 1 }, .Created);   // 201 JSON
-    /// ctx.sendAutoStatus("Created", .Created);      // 201 text
-    /// ```
-    pub fn sendAutoStatus(self: *FetchContext, value: anytype, status: StatusCode) void {
-        const T = @TypeOf(value);
-        const type_info = @typeInfo(T);
-
-        // Handle void type -> 204 No Content
-        if (T == void) {
-            self.noContent();
-            return;
-        }
-
-        // Handle empty struct literal {} -> 204 No Content
-        if (type_info == .@"struct" and type_info.@"struct".fields.len == 0) {
-            self.noContent();
-            return;
-        }
-
-        // Handle error types -> auto-map to HTTP status
-        if (type_info == .error_set) {
-            const error_status = getErrorStatus(value);
-            const error_name = @errorName(value);
-            self.sendJsonError(error_name, @intFromEnum(error_status));
-            return;
-        }
-
-        // Handle error unions -> unwrap and recurse
-        if (type_info == .error_union) {
-            if (value) |v| {
-                self.sendAutoStatus(v, status);
-            } else |err| {
-                self.sendAuto(err);
-            }
-            return;
-        }
-
-        // Handle string slices -> text response
-        if (comptime isStringType(T)) {
-            self.text(value, @intFromEnum(status));
-            return;
-        }
-
-        // Handle comptime string literals (*const [N]u8) -> text response
-        if (comptime isComptimeString(T)) {
-            self.text(value, @intFromEnum(status));
-            return;
-        }
-
-        // Handle everything else (structs, arrays, etc.) -> JSON serialize
-        self.sendJsonValue(value, @intFromEnum(status));
-    }
-
-    /// Send a JSON error response: {"error": "message"}
-    ///
-    /// Example:
-    /// ```
-    /// ctx.sendJsonError("User not found", 404);
-    /// ```
-    pub fn sendJsonError(self: *FetchContext, message: []const u8, status: u16) void {
-        self.sendJsonValue(.{ .@"error" = message }, status);
-    }
-
-    /// Serialize any Zig value to JSON and send as response.
-    /// Uses a 4KB buffer for serialization.
-    ///
-    /// Example:
-    /// ```
-    /// const User = struct { id: u32, name: []const u8 };
-    /// ctx.sendJsonValue(User{ .id = 1, .name = "Alice" }, 200);
-    /// ctx.sendJsonValue(.{ .ok = true }, 200);  // anonymous struct
-    /// ```
-    pub fn sendJsonValue(self: *FetchContext, value: anytype, status: u16) void {
-        const statusText = @as(StatusCode, @enumFromInt(status)).toString();
-
-        // Use a 4KB buffer for JSON serialization
-        var buf: [4096]u8 = undefined;
-        var writer: std.Io.Writer = .fixed(&buf);
-
-        std.json.Stringify.value(value, .{}, &writer) catch {
-            // If serialization fails, send an error response
-            self.throw(500, "JSON serialization failed");
-            return;
-        };
-
-        const json_bytes = buf[0..writer.end];
-
-        const body_str = String.new(json_bytes);
-        defer body_str.free();
-
-        const headers = Headers.new();
-        defer headers.free();
-        headers.setText("Content-Type", "application/json");
-        headers.setText("Access-Control-Allow-Origin", "*");
-
-        const res = Response.new(
-            .{ .string = &body_str },
-            .{ .status = status, .statusText = statusText, .headers = &headers },
         );
         defer res.free();
 
@@ -524,4 +442,46 @@ test "StatusCode integer values" {
     try testing.expectEqual(@as(u16, 403), @intFromEnum(StatusCode.Forbidden));
     try testing.expectEqual(@as(u16, 404), @intFromEnum(StatusCode.NotFound));
     try testing.expectEqual(@as(u16, 500), @intFromEnum(StatusCode.InternalServerError));
+}
+
+test "JSON serialization with std.json.Stringify" {
+    const testing = std.testing;
+
+    // Test struct serialization
+    const User = struct { id: u32, name: []const u8 };
+    const user = User{ .id = 1, .name = "Alice" };
+
+    var buf: [256]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+
+    try std.json.Stringify.value(user, .{}, &writer);
+    const result = buf[0..writer.end];
+
+    try testing.expectEqualStrings("{\"id\":1,\"name\":\"Alice\"}", result);
+}
+
+test "JSON serialization with anonymous struct" {
+    const testing = std.testing;
+
+    var buf: [256]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+
+    try std.json.Stringify.value(.{ .ok = true, .count = 42 }, .{}, &writer);
+    const result = buf[0..writer.end];
+
+    try testing.expectEqualStrings("{\"ok\":true,\"count\":42}", result);
+}
+
+test "JSON serialization for error response" {
+    const testing = std.testing;
+
+    const error_name = @errorName(error.NotFound);
+
+    var buf: [256]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+
+    try std.json.Stringify.value(.{ .@"error" = error_name }, .{}, &writer);
+    const result = buf[0..writer.end];
+
+    try testing.expectEqualStrings("{\"error\":\"NotFound\"}", result);
 }

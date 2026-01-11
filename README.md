@@ -630,47 +630,34 @@ fn handleGetUser(ctx: *FetchContext) void {
 
 ### Response Helpers
 
-The library provides ergonomic response helpers inspired by [tokamak](https://github.com/cztomsik/tokamak):
+The library provides Hono-style response helpers with `ctx.json()` supporting automatic JSON serialization:
 
 ```zig
 fn handleExample(ctx: *FetchContext) void {
-    // Auto-detection: struct -> JSON, string -> text, error -> status code
-    ctx.sendAuto(.{ .id = 1, .name = "Alice" });     // 200 JSON
-    ctx.sendAuto("Hello, World!");                    // 200 text/plain
-    ctx.sendAuto(error.NotFound);                     // 404 {"error": "NotFound"}
-    ctx.sendAuto({});                                 // 204 No Content
+    // Struct -> JSON (auto-serialized)
+    ctx.json(.{ .id = 1, .name = "Alice" }, 200);
 
-    // With explicit status code
-    ctx.sendAutoStatus(.{ .id = 1 }, .Created);       // 201 JSON
+    // Named struct -> JSON
+    const User = struct { id: u32, name: []const u8 };
+    ctx.json(User{ .id = 1, .name = "Alice" }, 200);
 
-    // JSON error helper
-    ctx.sendJsonError("User not found", 404);         // {"error": "User not found"}
+    // With explicit status codes
+    ctx.json(.{ .id = 1 }, 201);  // Created
 
-    // Classic helpers (still available)
-    ctx.json("{\"ok\":true}", 200);
-    ctx.text("Hello", 200);
+    // Raw JSON string (backward compatible)
+    ctx.json("{\"raw\":true}", 200);
+
+    // Error -> JSON error body {"error": "ErrorName"}
+    ctx.json(error.NotFound, 404);
+
+    // Other response types
+    ctx.text("Hello, World!", 200);
     ctx.html("<h1>Hello</h1>", 200);
     ctx.redirect("/new-path", 302);
     ctx.noContent();  // 204
     ctx.throw(500, "Internal error");
 }
 ```
-
-**Error to Status Code Mapping:**
-
-| Error | Status |
-|-------|--------|
-| `error.BadRequest` | 400 |
-| `error.Unauthorized` | 401 |
-| `error.Forbidden` | 403 |
-| `error.NotFound` | 404 |
-| `error.MethodNotAllowed` | 405 |
-| `error.Conflict` | 409 |
-| `error.UnprocessableEntity` | 422 |
-| `error.TooManyRequests` | 429 |
-| `error.InternalServerError` | 500 |
-| `error.NotImplemented` | 501 |
-| `error.ServiceUnavailable` | 503 |
 
 ---
 
