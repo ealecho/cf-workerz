@@ -1475,6 +1475,95 @@ Verify your wrangler.toml has the correct bindings and the binding names match.
 
 ---
 
+## Feature Parity with workers-rs
+
+cf-workerz aims for feature parity with [workers-rs](https://github.com/cloudflare/workers-rs), the official Rust SDK for Cloudflare Workers.
+
+### Implemented Features (~85% parity)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Storage & Data** | | |
+| KV Storage | ✅ | Full CRUD, list, metadata, expiration |
+| R2 Object Storage | ✅ | Get, put, delete, list, head, multipart |
+| D1 Database | ✅ | Prepared statements, batch, ergonomic query API |
+| Cache API | ✅ | Match, put, delete |
+| **Messaging & Compute** | | |
+| Queues | ✅ | Producer (send/sendBatch) and Consumer (ack/retry) |
+| Service Bindings | ✅ | Worker-to-Worker via Fetcher API |
+| Workers AI | ✅ | Text generation, chat, embeddings, translation, summarization |
+| Durable Objects | ✅ | Basic support |
+| Scheduled Events | ✅ | Cron triggers |
+| **HTTP & Networking** | | |
+| Fetch API | ✅ | Request/Response, headers |
+| Built-in Router | ✅ | Path params, wildcards, groups, response helpers |
+| Headers | ✅ | Full API |
+| WebSockets | ✅ | Basic support |
+| **Web APIs** | | |
+| FormData | ✅ | Parse/create |
+| URL/URLSearchParams | ✅ | Full API |
+| Streams | ✅ | Readable/Writable/Transform |
+| Crypto | ✅ | getRandomValues, randomUUID |
+| CF Properties | ✅ | Access to cf object (geo, colo, etc.) |
+| **Developer Experience** | | |
+| Ergonomic D1 API | ✅ | pg.zig-style query/one/execute with struct mapping |
+| JSON Body Parsing | ✅ | Hono-style ctx.bodyJson() helper |
+| Auto JSON Serialization | ✅ | ctx.json() with struct support |
+| Type-safe Routing | ✅ | Compile-time route checking |
+
+### Missing Features (Roadmap)
+
+| Feature | Priority | Complexity | Notes |
+|---------|----------|------------|-------|
+| Hyperdrive | High | Medium | PostgreSQL connection pooling |
+| Vectorize | High | Medium | Vector database for AI |
+| Browser Rendering | Medium | High | Puppeteer-like API |
+| Rate Limiting | Medium | Medium | Built-in rate limiting |
+| Analytics Engine | Low | Low | Custom analytics |
+| Email Workers | Low | Medium | Inbound email handling |
+| mTLS | Low | Medium | Client certificates |
+| TCP Sockets | Low | High | Raw TCP connections |
+| Constellation | Low | High | ML model inference |
+
+### cf-workerz Exclusive Features
+
+Features in cf-workerz not available in workers-rs:
+
+| Feature | Description |
+|---------|-------------|
+| **Ergonomic D1 API** | pg.zig-inspired `query(T, sql, params)` with automatic struct mapping |
+| **JSPI Async** | Zero-overhead async without Asyncify (smaller binaries) |
+| **JsonBody Helper** | Hono-style request body parsing with typed getters |
+| **Tiny Binaries** | 10-15KB WASM vs 100KB+ for Rust workers |
+
+---
+
+## Roadmap
+
+### v0.2.0 (Next Release)
+- [ ] Hyperdrive support (PostgreSQL connection pooling)
+- [ ] Vectorize support (Vector database)
+- [ ] Improved error messages with stack traces
+- [ ] More AI models (image generation, speech-to-text)
+
+### v0.3.0 (Future)
+- [ ] Browser Rendering API
+- [ ] Rate Limiting API
+- [ ] Email Workers support
+- [ ] Middleware system for router
+
+### v1.0.0 (Stable)
+- [ ] Full workers-rs feature parity
+- [ ] Comprehensive test suite
+- [ ] Production stability guarantees
+- [ ] Semantic versioning
+
+### Contributing to Roadmap
+
+Want to help implement a feature? Check the [issues](https://github.com/ealecho/cf-workerz/issues) or open a new one to discuss!
+
+---
+
 ## Contributing
 
 Contributions are welcome! Please see the [workers-zig repository](https://github.com/ealecho/workers-zig) for development setup.
