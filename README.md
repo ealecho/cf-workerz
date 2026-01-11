@@ -5,6 +5,7 @@ A Zig library for building Cloudflare Workers with WebAssembly. Write high-perfo
 ## Features
 
 - **Cloudflare APIs**: KV, R2, D1, Cache, Queues, Service Bindings, Workers AI
+- **Ergonomic D1**: pg.zig-inspired query API with inline params and struct mapping
 - **Built-in Router**: Path parameters, wildcards, route groups, response helpers
 - **JSPI Async**: Zero-overhead JavaScript Promise Integration (no Asyncify)
 - **Tiny Binaries**: WASM output typically 10-15KB
@@ -771,6 +772,87 @@ fn handleR2(ctx: *FetchContext) void {
 ---
 
 ## D1 Database
+
+cf-workerz provides two APIs for D1: an **ergonomic query API** (recommended) and the lower-level **prepared statement API**.
+
+### Ergonomic Query API (Recommended)
+
+Inspired by [pg.zig](https://github.com/ziglang/pg.zig), the ergonomic API provides inline parameter binding and automatic struct mapping:
+
+```zig
+const workers = @import("cf-workerz");
+
+// Define your data struct
+const User = struct {
+    id: u32,
+    name: []const u8,
+    email: []const u8,
+    active: bool,
+};
+
+fn handleUsers(ctx: *workers.FetchContext) void {
+    const db = ctx.env.d1("MY_DB") orelse {
+        ctx.throw(500, "D1 not configured");
+        return;
+    };
+    defer db.free();
+
+    // Query multiple rows - returns iterator of typed structs
+    var users = db.query(User, "SELECT * FROM users WHERE active = ?", .{true});
+    defer users.deinit();
+
+    while (users.next()) |user| {
+        // user.id, user.name, user.email, user.active - fully typed!
+        _ = user;
+    }
+
+    // Query single row - returns ?T
+    const user = db.one(User, "SELECT * FROM users WHERE id = ?", .{123});
+    if (user) |u| {
+        ctx.json(.{ .id = u.id, .name = u.name, .email = u.email }, 200);
+        return;
+    }
+
+    // Execute INSERT/UPDATE/DELETE - returns affected row count
+    const affected = db.execute("DELETE FROM users WHERE active = ?", .{false});
+    ctx.json(.{ .deleted = affected }, 200);
+}
+```
+
+**Ergonomic API Methods:**
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `db.query(T, sql, params)` | `D1Query(T)` | Query multiple rows, returns iterator |
+| `db.one(T, sql, params)` | `?T` | Query single row, returns struct or null |
+| `db.execute(sql, params)` | `u64` | Execute statement, returns affected rows |
+
+**Supported Parameter Types:**
+
+| Type | Example | Notes |
+|------|---------|-------|
+| Integers | `i32`, `u32`, `i64`, `u64` | All integer types |
+| Floats | `f32`, `f64` | Floating point |
+| Boolean | `bool` | Converted to 0/1 |
+| String | `[]const u8` | Text values |
+| Null | `null` | SQL NULL |
+| Optional | `?i32`, `?[]const u8` | Null if none |
+
+**Supported Struct Field Types:**
+
+| Type | Example | Notes |
+|------|---------|-------|
+| Integers | `id: u32` | Numeric columns |
+| Floats | `score: f64` | Floating point columns |
+| Boolean | `active: bool` | Boolean columns |
+| String | `name: []const u8` | Text columns |
+| Optional | `email: ?[]const u8` | Nullable columns |
+
+**Security:** Unsupported types (structs, arrays, pointers) are rejected at **compile time** to prevent injection vulnerabilities.
+
+### Prepared Statement API (Lower-level)
+
+For more control, use the lower-level prepared statement API:
 
 ```zig
 const D1Database = workers.D1Database;

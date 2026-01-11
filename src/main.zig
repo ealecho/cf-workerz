@@ -10,6 +10,7 @@ pub const D1Database = apis.D1Database;
 pub const BatchSQLSuccess = apis.BatchSQLSuccess;
 pub const SQLSuccess = apis.SQLSuccess;
 pub const PreparedStatement = apis.PreparedStatement;
+pub const D1Query = apis.D1Query;
 pub const DurableObject = apis.DurableObject;
 pub const fetch = apis.fetch;
 pub const KVNamespace = apis.KVNamespace;

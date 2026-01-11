@@ -37,6 +37,7 @@ pub const D1Database = d1.D1Database;
 pub const BatchSQLSuccess = d1.BatchSQLSuccess;
 pub const SQLSuccess = d1.SQLSuccess;
 pub const PreparedStatement = d1.PreparedStatement;
+pub const D1Query = d1.D1Query;
 
 // Durable Objects API
 const durable = @import("durable.zig");
