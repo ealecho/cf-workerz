@@ -26,6 +26,11 @@ pub const getErrorStatus = fetch.getErrorStatus;
 pub const isStringType = fetch.isStringType;
 pub const isComptimeString = fetch.isComptimeString;
 
+// JSON body helper
+const json = @import("json.zig");
+pub const JsonBody = json.JsonBody;
+pub const JSON_BUFFER_SIZE = json.JSON_BUFFER_SIZE;
+
 // Schedule handler types
 const schedule = @import("schedule.zig");
 pub const ScheduleFn = schedule.ScheduleFn;

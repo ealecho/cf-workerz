@@ -14,6 +14,7 @@ const String = @import("../bindings/string.zig").String;
 const getStringFree = @import("../bindings/string.zig").getStringFree;
 const getObjectValue = @import("../bindings/object.zig").getObjectValue;
 const router = @import("../router.zig");
+const JsonBody = @import("json.zig").JsonBody;
 
 /// Common HTTP errors that map to status codes
 /// Use these with ctx.sendAuto(error.NotFound) for automatic status mapping
@@ -132,6 +133,46 @@ pub const FetchContext = struct {
         defer self.deinit();
         // call the resolver.
         jsResolve(self.id, res.id);
+    }
+
+    // ========================================================================
+    // Request Helpers
+    // ========================================================================
+
+    /// Parse the request body as JSON and return a JsonBody helper.
+    /// Returns null if the body is missing, empty, or invalid JSON.
+    ///
+    /// Example:
+    /// ```
+    /// var json = ctx.bodyJson() orelse {
+    ///     ctx.json(.{ .@"error" = "Invalid JSON body" }, 400);
+    ///     return;
+    /// };
+    /// defer json.deinit();
+    ///
+    /// const title = json.getString("title") orelse {
+    ///     ctx.json(.{ .@"error" = "Title is required" }, 400);
+    ///     return;
+    /// };
+    /// const description = json.getStringOr("description", "");
+    /// ```
+    pub fn bodyJson(self: *FetchContext) ?JsonBody {
+        const body = self.req.text() orelse return null;
+        return JsonBody.parse(allocator, body);
+    }
+
+    /// Shorthand for ctx.params.get(name).
+    /// Equivalent to Hono's c.req.param("name").
+    ///
+    /// Example:
+    /// ```
+    /// const id = ctx.param("id") orelse {
+    ///     ctx.json(.{ .@"error" = "Missing id parameter" }, 400);
+    ///     return;
+    /// };
+    /// ```
+    pub fn param(self: *FetchContext, name: []const u8) ?[]const u8 {
+        return self.params.get(name);
     }
 
     // ========================================================================
@@ -484,4 +525,9 @@ test "JSON serialization for error response" {
     const result = buf[0..writer.end];
 
     try testing.expectEqualStrings("{\"error\":\"NotFound\"}", result);
+}
+
+// Import json tests
+test {
+    _ = @import("json.zig");
 }

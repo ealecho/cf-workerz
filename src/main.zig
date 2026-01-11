@@ -108,6 +108,9 @@ pub const HandlerFn = worker.HandlerFn;
 pub const ScheduleFn = worker.ScheduleFn;
 pub const Route = worker.Route;
 
+// JSON body helper for ergonomic request parsing
+pub const JsonBody = worker.JsonBody;
+
 // Re-export Router
 pub const router = @import("router.zig");
 pub const Router = router.Route; // Main router entry point
