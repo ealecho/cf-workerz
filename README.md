@@ -85,7 +85,6 @@ pub fn build(b: *std.Build) void {
 ### 1. Create your worker (src/main.zig)
 
 ```zig
-const std = @import("std");
 const workers = @import("cf-workerz");
 
 const FetchContext = workers.FetchContext;
@@ -95,28 +94,40 @@ const Route = workers.Router;
 const routes: []const Route = &.{
     Route.get("/", handleRoot),
     Route.get("/hello/:name", handleHello),
+    Route.post("/users", handleCreateUser),
     Route.get("/api/health", handleHealth),
 };
 
 fn handleRoot(ctx: *FetchContext) void {
-    ctx.json("{\"message\":\"Hello from cf-workerz!\"}", 200);
+    // Auto-serialize struct to JSON
+    ctx.json(.{ .message = "Hello from cf-workerz!" }, 200);
 }
 
 fn handleHello(ctx: *FetchContext) void {
-    const name = ctx.params.get("name") orelse "World";
-    
-    var buf: [256]u8 = undefined;
-    const response = std.fmt.bufPrint(&buf, 
-        "{{\"hello\":\"{s}\"}}", .{name}) catch {
-        ctx.throw(500, "Buffer overflow");
+    // Use ctx.param() shorthand for path parameters
+    const name = ctx.param("name") orelse "World";
+    ctx.json(.{ .hello = name }, 200);
+}
+
+fn handleCreateUser(ctx: *FetchContext) void {
+    // Parse JSON request body with ctx.bodyJson()
+    var json = ctx.bodyJson() orelse {
+        ctx.json(.{ .@"error" = "Invalid JSON body" }, 400);
         return;
     };
-    
-    ctx.json(response, 200);
+    defer json.deinit();
+
+    const name = json.getString("name") orelse {
+        ctx.json(.{ .@"error" = "Name is required" }, 400);
+        return;
+    };
+    const email = json.getStringOr("email", "");
+
+    ctx.json(.{ .created = true, .name = name, .email = email }, 201);
 }
 
 fn handleHealth(ctx: *FetchContext) void {
-    ctx.json("{\"status\":\"healthy\"}", 200);
+    ctx.json(.{ .status = "healthy" }, 200);
 }
 
 // Entry point called by TypeScript runtime
@@ -602,11 +613,14 @@ export fn handleFetch(ctx_id: u32) void {
 
 ```zig
 fn handleGetUser(ctx: *FetchContext) void {
-    // Access path parameter by name
-    const id = ctx.params.get("id") orelse {
-        ctx.throw(400, "Missing user ID");
+    // Preferred: use ctx.param() shorthand (Hono-style)
+    const id = ctx.param("id") orelse {
+        ctx.json(.{ .@"error" = "Missing user ID" }, 400);
         return;
     };
+    
+    // Alternative: access via ctx.params directly
+    const name = ctx.params.get("name");
     
     // Access by index
     const first = ctx.params.getIndex(0);
@@ -614,7 +628,8 @@ fn handleGetUser(ctx: *FetchContext) void {
     // Access wildcard match
     const path = ctx.params.wildcard();
     
-    // ...
+    // Use the parameter
+    ctx.json(.{ .id = id, .name = name }, 200);
 }
 ```
 
