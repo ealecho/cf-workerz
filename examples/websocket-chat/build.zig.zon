@@ -1,0 +1,17 @@
+.{
+    .name = .websocket_chat,
+    .fingerprint = 0x9148c822f745061a,
+    .version = "0.1.0",
+
+    .dependencies = .{
+        .cf_workerz = .{
+            .path = "../..",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

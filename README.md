@@ -2172,6 +2172,7 @@ See the [examples directory](https://github.com/ealecho/cf-workerz/tree/master/e
 
 - **hello-world**: Basic router example with path parameters and JSON responses
 - **websocket-client**: Outbound WebSocket connections and inbound upgrades
+- **websocket-chat**: Real-time chat with WebSockets and Durable Objects
 - **durable-objects**: Location hints, alarms, SQL storage, counter DO
 - **crypto**: SubtleCrypto API - hashing, HMAC, AES encryption, key derivation
 - **todo-app**: Full CRUD with D1, Cache, KV, and AI
