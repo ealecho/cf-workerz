@@ -1481,94 +1481,184 @@ Verify your wrangler.toml has the correct bindings and the binding names match.
 
 cf-workerz aims for feature parity with [workers-rs](https://github.com/cloudflare/workers-rs), the official Rust SDK for Cloudflare Workers.
 
-### Implemented Features (~85% parity)
+> **Current Status: ~70-75% feature parity**
+>
+> Core APIs (KV, R2, D1, Cache, Queues, AI, Service Bindings) are fully implemented.
+> Major gaps: Durable Objects, WebSockets, FormData, URL utilities, SubtleCrypto.
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| **Storage & Data** | | |
-| KV Storage | ✅ | Full CRUD, list, metadata, expiration |
-| R2 Object Storage | ✅ | Get, put, delete, list, head, multipart |
-| D1 Database | ✅ | Prepared statements, batch, ergonomic query API |
-| Cache API | ✅ | Match, put, delete |
-| **Messaging & Compute** | | |
-| Queues | ✅ | Producer (send/sendBatch) and Consumer (ack/retry) |
-| Service Bindings | ✅ | Worker-to-Worker via Fetcher API |
-| Workers AI | ✅ | Text generation, chat, embeddings, translation, summarization |
-| Durable Objects | ✅ | Basic support |
-| Scheduled Events | ✅ | Cron triggers |
-| **HTTP & Networking** | | |
-| Fetch API | ✅ | Request/Response, headers |
-| Built-in Router | ✅ | Path params, wildcards, groups, response helpers |
-| Headers | ✅ | Full API |
-| WebSockets | ✅ | Basic support |
-| **Web APIs** | | |
-| FormData | ✅ | Parse/create |
-| URL/URLSearchParams | ✅ | Full API |
-| Streams | ✅ | Readable/Writable/Transform |
-| Crypto | ✅ | getRandomValues, randomUUID |
-| CF Properties | ✅ | Access to cf object (geo, colo, etc.) |
-| **Developer Experience** | | |
-| Ergonomic D1 API | ✅ | pg.zig-style query/one/execute with struct mapping |
-| JSON Body Parsing | ✅ | Hono-style ctx.bodyJson() helper |
-| Auto JSON Serialization | ✅ | ctx.json() with struct support |
-| Type-safe Routing | ✅ | Compile-time route checking |
+### Legend
 
-### Missing Features (Roadmap)
+| Symbol | Meaning |
+|--------|---------|
+| ✅ | **Complete** - Production-ready, full API coverage |
+| ⚠️ | **Partial** - Works but missing some methods/features |
+| ❌ | **Stub** - Exists but not functional (init/free only) |
+| ➖ | **Not Started** - No implementation yet |
 
-| Feature | Priority | Complexity | Notes |
-|---------|----------|------------|-------|
-| Hyperdrive | High | Medium | PostgreSQL connection pooling |
-| Vectorize | High | Medium | Vector database for AI |
-| Browser Rendering | Medium | High | Puppeteer-like API |
-| Rate Limiting | Medium | Medium | Built-in rate limiting |
-| Analytics Engine | Low | Low | Custom analytics |
-| Email Workers | Low | Medium | Inbound email handling |
-| mTLS | Low | Medium | Client certificates |
-| TCP Sockets | Low | High | Raw TCP connections |
-| Constellation | Low | High | ML model inference |
+---
 
-### cf-workerz Exclusive Features
+### Fully Implemented (✅)
 
-Features in cf-workerz not available in workers-rs:
+These features are complete and production-ready:
+
+| Feature | workers-rs | cf-workerz | Notes |
+|---------|-----------|------------|-------|
+| **Storage** | | | |
+| KV Namespace | ✅ | ✅ | Full CRUD, list, metadata, TTL expiration |
+| R2 Bucket | ✅ | ✅ | Get, put, delete, list, head, conditional requests |
+| D1 Database | ✅ | ✅ | Prepared statements, batch, **ergonomic query API** |
+| Cache API | ✅ | ✅ | Match, put, delete |
+| **Messaging** | | | |
+| Queues (Producer) | ✅ | ✅ | send, sendWithOptions, sendBatch |
+| Queues (Consumer) | ✅ | ✅ | Message iteration, ack, retry, batch ops |
+| **Compute** | | | |
+| Service Bindings | ✅ | ✅ | Worker-to-Worker via Fetcher API |
+| Workers AI | ✅ | ✅ | Text gen, chat, embeddings, translation, summarization |
+| Scheduled Events | ✅ | ✅ | Cron triggers via handleSchedule |
+| **HTTP** | | | |
+| Fetch API | ✅ | ✅ | Global fetch with Request/Response |
+| Request | ✅ | ✅ | Method, URL, headers, body (text/json/bytes) |
+| Response | ✅ | ✅ | Status, headers, body, clone, redirect, json |
+| **Routing** | | | |
+| Path Parameters | ✅ | ✅ | `/users/:id` with ctx.param() |
+| Wildcards | ✅ | ✅ | `/files/*path` with params.wildcard() |
+| Route Groups | ✅ | ✅ | `Route.group("/api", routes)` |
+| Response Helpers | ✅ | ✅ | json, text, html, redirect, noContent, throw |
+| **Utilities** | | | |
+| CF Properties | ✅ | ✅ | Geo, colo, ASN, bot score, etc. |
+| crypto.randomUUID | ✅ | ✅ | Generate UUIDs |
+| crypto.getRandomValues | ✅ | ✅ | Cryptographic random bytes |
+| Execution Context | ✅ | ✅ | waitUntil, passThroughOnException |
+
+---
+
+### Partially Implemented (⚠️)
+
+These features work but are missing some functionality:
+
+| Feature | workers-rs | cf-workerz | What's Missing | Effort |
+|---------|-----------|------------|----------------|--------|
+| Headers | ✅ | ⚠️ | `keys()`, `values()`, `entries()` iterators | ~0.5 day |
+| Streams | ✅ | ⚠️ | Transform streams, piping utilities | ~1 day |
+
+---
+
+### Stub Only (❌)
+
+These exist in the codebase but are **not functional** (only init/free methods):
+
+| Feature | workers-rs | cf-workerz | Priority | Effort | Notes |
+|---------|-----------|------------|----------|--------|-------|
+| **Durable Objects** | ✅ Full | ❌ Stub | 🔴 Critical | ~5-7 days | Major CF differentiator |
+| DO SQLite Storage | ✅ Full | ❌ Missing | 🔴 Critical | (with DO) | Depends on DO |
+| WebSocket | ✅ Full | ❌ Stub | 🟠 High | ~2-3 days | Real-time apps need this |
+| WebSocketPair | ✅ Full | ❌ Missing | 🟠 High | ~1 day | Server-side WebSocket |
+| FormData | ✅ Full | ❌ Stub | 🟡 Medium | ~1-2 days | File uploads, multipart |
+| URL | ✅ Full | ❌ Stub | 🟡 Medium | ~1 day | URL parsing/manipulation |
+| URLSearchParams | ✅ Full | ❌ Stub | 🟡 Medium | ~0.5 day | Query string handling |
+| SubtleCrypto | ✅ Full | ❌ Stub | 🟡 Medium | ~2-3 days | Encrypt, sign, hash, keys |
+
+---
+
+### Not Started (➖)
+
+These features exist in workers-rs but have no implementation in cf-workerz:
+
+| Feature | workers-rs | Priority | Effort | Notes |
+|---------|-----------|----------|--------|-------|
+| RPC Support | ✅ Experimental | 🟡 Medium | ~3-4 days | Worker-to-Worker RPC |
+| Hyperdrive | ✅ | 🟡 Medium | ~2-3 days | PostgreSQL connection pooling |
+| Vectorize | ✅ | 🟡 Medium | ~2-3 days | Vector database for AI apps |
+| Rate Limiting | ✅ | 🟢 Low | ~1-2 days | Built-in rate limiting API |
+| Analytics Engine | ✅ | 🟢 Low | ~1-2 days | Custom analytics/metrics |
+| Browser Rendering | ✅ | 🟢 Low | ~4-5 days | Puppeteer-like API |
+| Email Workers | ✅ | 🟢 Low | ~2-3 days | Inbound email handling |
+| mTLS | ✅ | 🟢 Low | ~1-2 days | Client certificates |
+| TCP Sockets | ✅ | 🟢 Low | ~3-4 days | Raw TCP connections |
+
+---
+
+### cf-workerz Advantages
+
+Features unique to cf-workerz (not available in workers-rs):
 
 | Feature | Description |
 |---------|-------------|
-| **Ergonomic D1 API** | pg.zig-inspired `query(T, sql, params)` with automatic struct mapping |
-| **JSPI Async** | Zero-overhead async without Asyncify (smaller binaries) |
-| **JsonBody Helper** | Hono-style request body parsing with typed getters |
-| **Tiny Binaries** | 10-15KB WASM vs 100KB+ for Rust workers |
+| **Ergonomic D1 API** | pg.zig-inspired `db.query(User, sql, params)` with automatic struct mapping |
+| **JSPI Async** | Zero-overhead async via JavaScript Promise Integration (no Asyncify bloat) |
+| **JsonBody Helper** | Hono-style `ctx.bodyJson()` with typed getters (`getString`, `getInt`, etc.) |
+| **Tiny Binaries** | 10-15KB WASM output vs 100KB+ for Rust workers |
+| **No Macros** | Pure Zig without proc-macro complexity |
+| **LSP Documentation** | Comprehensive hover docs for all APIs |
+
+---
+
+### Side-by-Side Comparison
+
+| Aspect | workers-rs (Rust) | cf-workerz (Zig) |
+|--------|------------------|------------------|
+| Binary Size | ~100-500KB | ~10-15KB |
+| Compile Time | ~30-60s | ~1-3s |
+| Async Model | tokio-style (Asyncify) | JSPI (native) |
+| Type Safety | ✅ Strong | ✅ Strong |
+| Learning Curve | Moderate (Rust) | Lower (Zig) |
+| Ecosystem | Large (crates.io) | Growing |
+| Axum/http compat | ✅ Yes | ➖ No (different ecosystem) |
+| Feature Parity | 100% (official) | ~70-75% |
 
 ---
 
 ## Roadmap
 
-### v0.2.0 (Next Release)
+### v0.2.0 (Next Release) - Core Gaps
+
+Focus: Close the critical feature gaps
+
+- [ ] **Durable Objects** - Full implementation with state/storage
+- [ ] **WebSocket** - Client and server support, WebSocketPair
+- [ ] **FormData** - Parse multipart, file uploads
+- [ ] **URL/URLSearchParams** - Full URL manipulation API
+- [ ] **SubtleCrypto** - Encrypt, decrypt, sign, verify, hash
+
+### v0.3.0 - Extended APIs
+
 - [ ] Hyperdrive support (PostgreSQL connection pooling)
 - [ ] Vectorize support (Vector database)
-- [ ] Improved error messages with stack traces
-- [ ] More AI models (image generation, speech-to-text)
+- [ ] RPC support (Worker-to-Worker RPC)
+- [ ] Headers iteration methods
 
-### v0.3.0 (Future)
+### v0.4.0 - Advanced Features
+
 - [ ] Browser Rendering API
 - [ ] Rate Limiting API
 - [ ] Email Workers support
 - [ ] Middleware system for router
 
 ### v1.0.0 (Stable)
+
 - [ ] Full workers-rs feature parity
 - [ ] Comprehensive test suite
 - [ ] Production stability guarantees
 - [ ] Semantic versioning
 
-### Contributing to Roadmap
-
-Want to help implement a feature? Check the [issues](https://github.com/ealecho/cf-workerz/issues) or open a new one to discuss!
-
 ---
 
 ## Contributing
 
-Contributions are welcome! Please see the [workers-zig repository](https://github.com/ealecho/workers-zig) for development setup.
+### Help Wanted: Priority Features
+
+We welcome contributions! These features have the highest impact:
+
+| Feature | Complexity | Good First Issue? |
+|---------|-----------|-------------------|
+| Headers iteration | Low | ✅ Yes |
+| URLSearchParams | Low | ✅ Yes |
+| URL | Medium | ✅ Yes |
+| FormData | Medium | Maybe |
+| WebSocket | High | No |
+| Durable Objects | Very High | No |
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, or open an [issue](https://github.com/ealecho/cf-workerz/issues) to discuss!
 
 ## License
 
