@@ -2172,7 +2172,7 @@ See the [examples directory](https://github.com/ealecho/cf-workerz/tree/master/e
 
 - **hello-world**: Basic router example with path parameters and JSON responses
 - **websocket-client**: Outbound WebSocket connections and inbound upgrades
-- **websocket-chat**: Real-time chat with WebSockets and Durable Objects
+- **websocket-chat**: Real-time chat with WebSockets and Durable Objects + React client ([Live Demo](https://websocket-chat-client.pages.dev))
 - **durable-objects**: Location hints, alarms, SQL storage, counter DO
 - **crypto**: SubtleCrypto API - hashing, HMAC, AES encryption, key derivation
 - **todo-app**: Full CRUD with D1, Cache, KV, and AI
@@ -2316,6 +2316,7 @@ These features are complete and production-ready:
 | Path Parameters | ✅ | ✅ | `/users/:id` with ctx.param() |
 | Wildcards | ✅ | ✅ | `/files/*path` with params.wildcard() |
 | Route Groups | ✅ | ✅ | `Route.group("/api", routes)` |
+| Middleware | ✅ | ✅ | Before/after hooks with `dispatchWithMiddleware()` |
 | Response Helpers | ✅ | ✅ | json, text, html, redirect, noContent, throw |
 | **Utilities** | | | |
 | CF Properties | ✅ | ✅ | Geo, colo, ASN, bot score, etc. |
