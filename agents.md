@@ -92,6 +92,55 @@ fn getUser(ctx: *FetchContext) void {
 }
 ```
 
+### Query Parameters
+
+```zig
+// GET /search?q=zig&limit=10&debug=true
+fn handleSearch(ctx: *FetchContext) void {
+    // Get query parameters with ctx.query()
+    const params = ctx.query();
+    defer params.free();
+    
+    // Get parameter values
+    const q = params.get("q") orelse "";           // "zig"
+    const limit = params.get("limit") orelse "20"; // "10"
+    
+    // Check if parameter exists
+    if (params.has("debug")) {
+        // debug mode enabled
+    }
+    
+    // Count parameters
+    const count = params.size(); // 3
+    
+    ctx.json(.{ .query = q, .limit = limit, .count = count }, 200);
+}
+```
+
+### URL Access
+
+```zig
+fn handleRequest(ctx: *FetchContext) void {
+    // Get full parsed URL with ctx.url()
+    const url = ctx.url();
+    defer url.free();
+    
+    // Access URL components
+    const host = url.hostname();   // "api.example.com"
+    const proto = url.protocol();  // "https:"
+    const path = url.pathname();   // "/api/v1/users"
+    const search = url.search();   // "?page=1&limit=10"
+    const port = url.port();       // "8080" or ""
+    const origin = url.origin();   // "https://api.example.com:8080"
+    
+    ctx.json(.{
+        .host = host,
+        .path = path,
+        .search = search,
+    }, 200);
+}
+```
+
 ## Response Helpers
 
 ```zig

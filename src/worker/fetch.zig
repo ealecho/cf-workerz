@@ -59,6 +59,8 @@ const getStringFree = @import("../bindings/string.zig").getStringFree;
 const getObjectValue = @import("../bindings/object.zig").getObjectValue;
 const router = @import("../router.zig");
 const JsonBody = @import("json.zig").JsonBody;
+const URL = @import("../bindings/url.zig").URL;
+const URLSearchParams = @import("../bindings/url.zig").URLSearchParams;
 
 /// Common HTTP errors that map to status codes.
 ///
@@ -323,6 +325,55 @@ pub const FetchContext = struct {
         return self.params.get(name);
     }
 
+    /// Get the request URL as a parsed URL object.
+    ///
+    /// Provides access to URL components like hostname, pathname, protocol, etc.
+    /// The caller must free the returned URL when done.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// fn handler(ctx: *FetchContext) void {
+    ///     const url = ctx.url();
+    ///     defer url.free();
+    ///
+    ///     const host = url.hostname();  // "api.example.com"
+    ///     const proto = url.protocol(); // "https:"
+    ///     const path = url.pathname();  // "/api/v1/users"
+    /// }
+    /// ```
+    pub fn url(self: *FetchContext) URL {
+        const urlStr = self.req.url();
+        return URL.new(urlStr);
+    }
+
+    /// Get the query parameters from the request URL.
+    ///
+    /// Returns a URLSearchParams object for easy access to query string values.
+    /// The caller must free the returned URLSearchParams when done.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // Request: GET /search?q=zig&limit=10
+    /// fn handler(ctx: *FetchContext) void {
+    ///     const params = ctx.query();
+    ///     defer params.free();
+    ///
+    ///     const q = params.get("q") orelse "";           // "zig"
+    ///     const limit = params.get("limit") orelse "20"; // "10"
+    ///
+    ///     if (params.has("debug")) {
+    ///         // debug mode enabled
+    ///     }
+    /// }
+    /// ```
+    pub fn query(self: *FetchContext) URLSearchParams {
+        const reqUrl = self.url();
+        defer reqUrl.free();
+        return reqUrl.searchParams();
+    }
+
     // ========================================================================
     // Response Helpers
     // ========================================================================
@@ -482,13 +533,13 @@ pub const FetchContext = struct {
     /// // Permanent redirect (301)
     /// ctx.redirect("https://example.com/moved", 301);
     /// ```
-    pub fn redirect(self: *FetchContext, url: []const u8, status: u16) void {
+    pub fn redirect(self: *FetchContext, location: []const u8, status: u16) void {
         const actual_status = if (status == 0) @as(u16, 302) else status;
         const statusText = @as(StatusCode, @enumFromInt(actual_status)).toString();
 
         const headers = Headers.new();
         defer headers.free();
-        headers.setText("Location", url);
+        headers.setText("Location", location);
 
         const res = Response.new(
             .{ .none = {} },

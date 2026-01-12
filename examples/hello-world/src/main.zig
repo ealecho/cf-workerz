@@ -26,6 +26,7 @@
 //   GET  /test/url            - Test URL parsing and manipulation
 //   GET  /test/params         - Test URLSearchParams
 //   POST /test/formdata       - Test FormData parsing
+//   GET  /test/query          - Test ctx.query() and ctx.url() helpers
 
 const std = @import("std");
 const workers = @import("cf-workerz");
@@ -78,6 +79,7 @@ const routes: []const Route = &.{
     Route.get("/test/url", handleTestUrl),
     Route.get("/test/params", handleTestParams),
     Route.post("/test/formdata", handleTestFormData),
+    Route.get("/test/query", handleTestQuery),
 };
 
 // ============================================================================
@@ -424,6 +426,52 @@ fn handleTestFormData(ctx: *FetchContext) void {
         .username = usernameValue,
         .emailAfterSet = emailAfterSet,
         .hasRolesAfterDelete = hasRolesAfterDelete,
+    }, 200);
+}
+
+/// Test query parameter access via ctx.query()
+/// GET /test/query?name=Alice&age=30&debug=true
+fn handleTestQuery(ctx: *FetchContext) void {
+    // Get query parameters from the request URL
+    const params = ctx.query();
+    defer params.free();
+
+    // Test get - retrieve parameter values
+    const name = params.get("name") orelse "(none)";
+    const age = params.get("age") orelse "(none)";
+    const missing = params.get("nonexistent") orelse "(none)";
+
+    // Test has - check if parameter exists
+    const hasDebug = params.has("debug");
+    const hasVerbose = params.has("verbose");
+
+    // Test size - count of parameters
+    const count = params.size();
+
+    // Also test ctx.url() for full URL access
+    const fullUrl = ctx.url();
+    defer fullUrl.free();
+    const pathname = fullUrl.pathname();
+    const search = fullUrl.search();
+    const host = fullUrl.hostname();
+
+    ctx.json(.{
+        .api = "ctx.query() and ctx.url()",
+        .params = .{
+            .name = name,
+            .age = age,
+            .missing = missing,
+        },
+        .has = .{
+            .debug = hasDebug,
+            .verbose = hasVerbose,
+        },
+        .count = count,
+        .url = .{
+            .pathname = pathname,
+            .search = search,
+            .hostname = host,
+        },
     }, 200);
 }
 
