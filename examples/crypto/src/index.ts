@@ -1,6 +1,7 @@
 /**
- * TypeScript runtime for cf-workerz Durable Objects example
- * Includes a Counter Durable Object class for demonstration
+ * TypeScript runtime for cf-workerz Crypto example
+ * Uses JSPI (JavaScript Promise Integration) for async operations
+ * Includes SubtleCrypto bindings for Web Crypto API
  */
 
 import wasmModule from '../zig-out/bin/worker.wasm';
@@ -38,7 +39,6 @@ interface WorkerContext {
 }
 
 interface Env {
-  COUNTER: DurableObjectNamespace;
   [key: string]: unknown;
 }
 
@@ -63,107 +63,6 @@ const CLASSES: ClassConstructor[] = [
 
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
-
-// ============================================================================
-// Counter Durable Object
-// ============================================================================
-
-export class Counter implements DurableObject {
-  private state: DurableObjectState;
-  private value: number = 0;
-
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    // Load stored value
-    this.state.blockConcurrencyWhile(async () => {
-      const stored = await this.state.storage.get<number>('value');
-      this.value = stored ?? 0;
-    });
-  }
-
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
-
-    // Initialize
-    if (path === '/init') {
-      return new Response(JSON.stringify({ initialized: true, value: this.value }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Get status
-    if (path === '/status') {
-      return new Response(JSON.stringify({
-        value: this.value,
-        id: this.state.id.toString(),
-      }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Increment
-    if (path === '/increment') {
-      this.value++;
-      await this.state.storage.put('value', this.value);
-      return new Response(JSON.stringify({ value: this.value }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Decrement
-    if (path === '/decrement') {
-      this.value--;
-      await this.state.storage.put('value', this.value);
-      return new Response(JSON.stringify({ value: this.value }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Set alarm
-    if (path === '/alarm' && request.method === 'POST') {
-      const timestamp = request.headers.get('X-Alarm-Timestamp');
-      if (timestamp) {
-        // Schedule alarm for 30 seconds from now
-        const alarmTime = Date.now() + 30000;
-        await this.state.storage.setAlarm(alarmTime);
-        return new Response(JSON.stringify({
-          alarm: 'scheduled',
-          time: alarmTime,
-        }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-    }
-
-    // SQL exec (simulated - DO storage doesn't have SQL in standard API)
-    if (path === '/sql/exec') {
-      const query = await request.text();
-      return new Response(JSON.stringify({
-        query: query,
-        message: 'SQL execution simulated (requires SQLite-backed DO)',
-      }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // SQL tables (simulated)
-    if (path === '/sql/tables') {
-      return new Response(JSON.stringify(['_cf_kv']), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    return new Response('Not found', { status: 404 });
-  }
-
-  async alarm(): Promise<void> {
-    // Alarm handler - increment value when alarm fires
-    this.value++;
-    await this.state.storage.put('value', this.value);
-    console.log('Alarm fired! New value:', this.value);
-  }
-}
 
 // ============================================================================
 // Heap
@@ -314,7 +213,7 @@ class WASMRuntime {
         return self.heap.put(res);
       },
 
-      jsAsyncFnCall: null,
+      jsAsyncFnCall: null, // Will be replaced
 
       jsResolve(ctxPtr: HeapPtr, resPtr: HeapPtr): void {
         const ctx = self.heap.get(ctxPtr) as WorkerContext;
@@ -426,8 +325,9 @@ class WASMRuntime {
         return self.heap.put(cache);
       },
 
-      jsFetch: null,
+      jsFetch: null, // Will be replaced
 
+      // Crypto APIs
       jsRandomUUID(): number {
         const uuid = crypto.randomUUID();
         return self.putString(uuid);
@@ -478,9 +378,31 @@ class WASMRuntime {
       }
     };
 
+    const jsTimingSafeEqualImpl = async (aPtr: HeapPtr, bPtr: HeapPtr): Promise<HeapPtr> => {
+      const a = self.heap.get(aPtr) as ArrayBuffer | Uint8Array;
+      const b = self.heap.get(bPtr) as ArrayBuffer | Uint8Array;
+      
+      // Cloudflare's crypto.subtle.timingSafeEqual
+      try {
+        const subtle = crypto.subtle as SubtleCrypto & { 
+          timingSafeEqual?: (a: ArrayBuffer, b: ArrayBuffer) => boolean 
+        };
+        if (subtle.timingSafeEqual) {
+          const aBuffer = a instanceof ArrayBuffer ? a : a.buffer;
+          const bBuffer = b instanceof ArrayBuffer ? b : b.buffer;
+          const result = subtle.timingSafeEqual(aBuffer, bBuffer);
+          return self.heap.put(result);
+        }
+      } catch {
+        // Fallback: not available
+      }
+      return self.heap.put(false);
+    };
+
     return {
       jsAsyncFnCall: new WebAssembly.Suspending(jsAsyncFnCallImpl),
       jsFetch: new WebAssembly.Suspending(jsFetchImpl),
+      jsTimingSafeEqual: new WebAssembly.Suspending(jsTimingSafeEqualImpl),
     };
   }
 

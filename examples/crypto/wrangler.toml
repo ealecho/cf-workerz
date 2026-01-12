@@ -1,0 +1,17 @@
+# cf-workerz Crypto Example
+# Demonstrates SubtleCrypto API usage
+
+name = "crypto-example"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Build command - Zig compiles to WASM
+[build]
+command = "zig build"
+
+# WASM module handling
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = false

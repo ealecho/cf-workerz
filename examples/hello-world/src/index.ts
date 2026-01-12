@@ -335,6 +335,11 @@ class WASMRuntime {
         const buffer = self.heap.get(bufPtr) as Uint8Array;
         crypto.getRandomValues(buffer);
       },
+
+      // SubtleCrypto - returns crypto.subtle object
+      jsGetSubtleCrypto(): HeapPtr {
+        return self.heap.put(crypto.subtle);
+      },
     };
   }
 

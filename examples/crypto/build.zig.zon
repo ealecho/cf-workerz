@@ -1,0 +1,17 @@
+.{
+    .name = .crypto_example,
+    .fingerprint = 0xbf903d7098a07269,
+    .version = "0.1.0",
+
+    .dependencies = .{
+        .cf_workerz = .{
+            .path = "../..",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

@@ -1846,6 +1846,8 @@ fn createResponse() void {
 
 ### Crypto
 
+#### Random Values and UUID
+
 ```zig
 const crypto = workers.apis;
 
@@ -1857,6 +1859,272 @@ crypto.getRandomValues(&buffer);
 const uuid = crypto.randomUUID();
 // uuid is a []const u8 like "550e8400-e29b-41d4-a716-446655440000"
 ```
+
+#### SubtleCrypto API
+
+The full Web Crypto SubtleCrypto API is available for cryptographic operations:
+
+```zig
+const workers = @import("cf-workerz");
+
+fn handleCrypto(ctx: *FetchContext) void {
+    // Get the SubtleCrypto object
+    const subtle = workers.SubtleCrypto.get();
+    defer subtle.free();
+
+    // Hash data with digest()
+    if (subtle.digest(.@"SHA-256", "hello world")) |hash| {
+        // hash is []const u8 containing the digest
+        ctx.bytes(hash, 200);
+    }
+}
+```
+
+#### Convenience Hash Functions
+
+```zig
+// One-liner hash functions
+const hash256 = workers.sha256("hello world");  // SHA-256
+const hash1 = workers.sha1("hello world");      // SHA-1
+const hash512 = workers.sha512("hello world");  // SHA-512
+const hashMd5 = workers.md5("hello world");     // MD5
+```
+
+#### HMAC Sign and Verify
+
+```zig
+fn hmacSign(ctx: *FetchContext) void {
+    const subtle = workers.SubtleCrypto.get();
+    defer subtle.free();
+
+    const secretKey = "my-secret-key";
+    const message = "data to sign";
+
+    // Import the key for HMAC
+    const importAlgo = workers.SubtleCryptoImportKeyAlgorithm{
+        .name = "HMAC",
+        .hash = .{ .name = "SHA-256" },
+    };
+
+    if (subtle.importKey(.raw, secretKey, &importAlgo, false, &.{.sign})) |key| {
+        defer key.free();
+
+        // Sign the message
+        const signAlgo = workers.SubtleCryptoSignAlgorithm{ .name = "HMAC" };
+        if (subtle.sign(&signAlgo, &key, message)) |signature| {
+            ctx.bytes(signature, 200);
+        }
+    }
+}
+
+fn hmacVerify(ctx: *FetchContext) void {
+    const subtle = workers.SubtleCrypto.get();
+    defer subtle.free();
+
+    const importAlgo = workers.SubtleCryptoImportKeyAlgorithm{
+        .name = "HMAC",
+        .hash = .{ .name = "SHA-256" },
+    };
+
+    if (subtle.importKey(.raw, secretKey, &importAlgo, false, &.{.verify})) |key| {
+        defer key.free();
+
+        const signAlgo = workers.SubtleCryptoSignAlgorithm{ .name = "HMAC" };
+        const isValid = subtle.verify(&signAlgo, &key, signature, message);
+        ctx.json(.{ .valid = isValid }, 200);
+    }
+}
+```
+
+#### AES-GCM Encryption
+
+```zig
+fn aesEncrypt(ctx: *FetchContext) void {
+    const subtle = workers.SubtleCrypto.get();
+    defer subtle.free();
+
+    // Generate an AES-256-GCM key
+    const genAlgo = workers.SubtleCryptoGenerateKeyAlgorithm{
+        .name = "AES-GCM",
+        .length = 256,
+    };
+
+    if (subtle.generateKey(&genAlgo, true, &.{ .encrypt, .decrypt })) |key| {
+        defer key.free();
+
+        // Generate IV (12 bytes for AES-GCM)
+        var iv: [12]u8 = undefined;
+        workers.getRandomValues(&iv);
+
+        // Encrypt
+        const encryptAlgo = workers.SubtleCryptoEncryptAlgorithm{
+            .name = "AES-GCM",
+            .iv = &iv,
+        };
+
+        if (subtle.encrypt(&encryptAlgo, &key, "secret message")) |ciphertext| {
+            // ciphertext contains encrypted data + auth tag
+            ctx.bytes(ciphertext, 200);
+        }
+    }
+}
+```
+
+#### Key Import/Export
+
+```zig
+fn keyOperations(ctx: *FetchContext) void {
+    const subtle = workers.SubtleCrypto.get();
+    defer subtle.free();
+
+    // Import raw key bytes
+    const keyBytes = [_]u8{ 0x00, 0x01, 0x02, ... }; // 32 bytes for AES-256
+    const importAlgo = workers.SubtleCryptoImportKeyAlgorithm{
+        .name = "AES-GCM",
+        .length = 256,
+    };
+
+    if (subtle.importKey(.raw, &keyBytes, &importAlgo, true, &.{ .encrypt, .decrypt })) |key| {
+        defer key.free();
+
+        // Export key back to raw bytes
+        if (subtle.exportKey(.raw, &key)) |exported| {
+            // exported is []const u8
+            _ = exported;
+        }
+
+        // Export as JWK
+        if (subtle.exportKey(.jwk, &key)) |jwk| {
+            // jwk is JSON string
+            _ = jwk;
+        }
+    }
+}
+```
+
+#### Key Derivation (PBKDF2, HKDF)
+
+```zig
+fn deriveKey(ctx: *FetchContext) void {
+    const subtle = workers.SubtleCrypto.get();
+    defer subtle.free();
+
+    const password = "user-password";
+    var salt: [16]u8 = undefined;
+    workers.getRandomValues(&salt);
+
+    // Import password as key material
+    const importAlgo = workers.SubtleCryptoImportKeyAlgorithm{ .name = "PBKDF2" };
+
+    if (subtle.importKey(.raw, password, &importAlgo, false, &.{.deriveKey})) |baseKey| {
+        defer baseKey.free();
+
+        // Derive an AES key from password
+        const deriveAlgo = workers.SubtleCryptoDeriveKeyAlgorithm{
+            .name = "PBKDF2",
+            .salt = &salt,
+            .iterations = 100000,
+            .hash = .{ .name = "SHA-256" },
+        };
+
+        const derivedAlgo = workers.SubtleCryptoGenerateKeyAlgorithm{
+            .name = "AES-GCM",
+            .length = 256,
+        };
+
+        if (subtle.deriveKey(&deriveAlgo, &baseKey, &derivedAlgo, true, &.{ .encrypt, .decrypt })) |derivedKey| {
+            defer derivedKey.free();
+            // Use derivedKey for encryption...
+        }
+    }
+}
+```
+
+#### RSA Key Pairs
+
+```zig
+fn rsaKeyPair(ctx: *FetchContext) void {
+    const subtle = workers.SubtleCrypto.get();
+    defer subtle.free();
+
+    // Generate RSA-OAEP key pair
+    const genAlgo = workers.SubtleCryptoGenerateKeyAlgorithm{
+        .name = "RSA-OAEP",
+        .modulusLength = 2048,
+        .publicExponent = &.{ 0x01, 0x00, 0x01 }, // 65537
+        .hash = .{ .name = "SHA-256" },
+    };
+
+    if (subtle.generateKeyPair(&genAlgo, true, &.{ .encrypt, .decrypt })) |pair| {
+        defer pair.free();
+
+        const publicKey = pair.publicKey();
+        const privateKey = pair.privateKey();
+        defer publicKey.free();
+        defer privateKey.free();
+
+        // Encrypt with public key
+        const encAlgo = workers.SubtleCryptoEncryptAlgorithm{ .name = "RSA-OAEP" };
+        if (subtle.encrypt(&encAlgo, &publicKey, "secret")) |encrypted| {
+            _ = encrypted;
+        }
+    }
+}
+```
+
+#### Timing-Safe Comparison
+
+```zig
+fn verifyToken(ctx: *FetchContext) void {
+    const subtle = workers.SubtleCrypto.get();
+    defer subtle.free();
+
+    const expected = "secret-token-value";
+    const provided = ctx.header("X-Token") orelse "";
+
+    // Constant-time comparison (prevents timing attacks)
+    const isValid = subtle.timingSafeEqual(expected, provided);
+    if (!isValid) {
+        ctx.throw(401, "Invalid token");
+        return;
+    }
+    ctx.json(.{ .authenticated = true }, 200);
+}
+```
+
+#### Supported Algorithms
+
+| Category | Algorithms |
+|----------|------------|
+| **Digest** | SHA-1, SHA-256, SHA-384, SHA-512, MD5 |
+| **HMAC** | HMAC with any digest algorithm |
+| **AES** | AES-GCM, AES-CBC, AES-CTR, AES-KW |
+| **RSA** | RSA-OAEP, RSASSA-PKCS1-v1_5, RSA-PSS |
+| **ECDSA** | P-256, P-384, P-521 curves |
+| **ECDH** | P-256, P-384, P-521 curves |
+| **Key Derivation** | PBKDF2, HKDF |
+
+#### Key Formats
+
+| Format | Description |
+|--------|-------------|
+| `raw` | Raw key bytes |
+| `pkcs8` | PKCS#8 private key |
+| `spki` | SubjectPublicKeyInfo public key |
+| `jwk` | JSON Web Key |
+
+#### Key Usages
+
+| Usage | Description |
+|-------|-------------|
+| `encrypt` | Encrypt data |
+| `decrypt` | Decrypt data |
+| `sign` | Create signatures |
+| `verify` | Verify signatures |
+| `deriveKey` | Derive new keys |
+| `deriveBits` | Derive raw bits |
+| `wrapKey` | Wrap (encrypt) keys |
+| `unwrapKey` | Unwrap (decrypt) keys |
 
 ---
 
@@ -1904,6 +2172,7 @@ See the [examples directory](https://github.com/ealecho/cf-workerz/tree/master/e
 - **hello-world**: Basic router example with path parameters and JSON responses
 - **websocket-client**: Outbound WebSocket connections and inbound upgrades
 - **durable-objects**: Location hints, alarms, SQL storage, counter DO
+- **crypto**: SubtleCrypto API - hashing, HMAC, AES encryption, key derivation
 - **todo-app**: Full CRUD with D1, Cache, KV, and AI
 - **router**: Path params, wildcards, groups demo
 - **r2-storage**: R2 object storage operations

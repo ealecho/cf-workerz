@@ -83,6 +83,26 @@ pub const AiTextResponse = apis.AiTextResponse;
 pub const AiUsage = apis.AiUsage;
 pub const AiEmbeddingResponse = apis.AiEmbeddingResponse;
 
+// Crypto API
+pub const getRandomValues = apis.getRandomValues;
+pub const randomUUID = apis.randomUUID;
+pub const DigestAlgorithm = apis.DigestAlgorithm;
+pub const KeyUsage = apis.KeyUsage;
+pub const KeyFormat = apis.KeyFormat;
+pub const CryptoKey = apis.CryptoKey;
+pub const CryptoKeyPair = apis.CryptoKeyPair;
+pub const SubtleCrypto = apis.SubtleCrypto;
+pub const DigestStream = apis.DigestStream;
+pub const SubtleCryptoEncryptAlgorithm = apis.SubtleCryptoEncryptAlgorithm;
+pub const SubtleCryptoGenerateKeyAlgorithm = apis.SubtleCryptoGenerateKeyAlgorithm;
+pub const SubtleCryptoImportKeyAlgorithm = apis.SubtleCryptoImportKeyAlgorithm;
+pub const SubtleCryptoSignAlgorithm = apis.SubtleCryptoSignAlgorithm;
+pub const SubtleCryptoDeriveKeyAlgorithm = apis.SubtleCryptoDeriveKeyAlgorithm;
+pub const sha256 = apis.sha256;
+pub const sha1 = apis.sha1;
+pub const sha512 = apis.sha512;
+pub const md5 = apis.md5;
+
 // Re-export bindings
 pub const bindings = @import("bindings/main.zig");
 pub const Array = bindings.Array;

@@ -4,368 +4,944 @@ const Classes = common.Classes;
 const jsFree = common.jsFree;
 const jsCreateClass = common.jsCreateClass;
 const toJSBool = common.toJSBool;
+const function = @import("../bindings/function.zig");
+const jsAsyncFnCall = function.jsAsyncFnCall;
+const jsFnCall = function.jsFnCall;
 const Array = @import("../bindings/array.zig").Array;
 const ArrayBuffer = @import("../bindings/arraybuffer.zig").ArrayBuffer;
 const object = @import("../bindings/object.zig");
 const Object = object.Object;
 const getObjectValue = object.getObjectValue;
+const getObjectValueNum = object.getObjectValueNum;
 const string = @import("../bindings/string.zig");
 const String = string.String;
 const getStringFree = string.getStringFree;
 
-pub extern fn jsGetRandomValues (bufPtr: u32) void;
-// NOTE: be sure to free the bytes after use
-pub fn getRandomValues (buf: []const u8) void {
-  // 1) push the buf over to js
-  const ab = ArrayBuffer.new(buf);
-  const uint8 = jsCreateClass(Classes.Uint8Array, ab.id);
-  // 2) create the random values
-  jsGetRandomValues(uint8);
-  // 3) re-ownership of bytes
-  return ab.bytes();
-}
-pub extern fn jsRandomUUID () [*:0]const u8;
-// NOTE: be sure to free the string after use
-pub fn randomUUID () []const u8 {
-  const rand = jsRandomUUID();
-  return std.mem.span(rand);
+// ============================================================================
+// External JS Bindings
+// ============================================================================
+
+pub extern fn jsGetRandomValues(bufPtr: u32) void;
+pub extern fn jsRandomUUID() [*:0]const u8;
+pub extern fn jsGetSubtleCrypto() u32;
+
+// ============================================================================
+// Basic Crypto Functions
+// ============================================================================
+
+/// Fill a buffer with cryptographically secure random values.
+/// The buffer must be pre-allocated.
+pub fn getRandomValues(buf: []u8) void {
+    const ab = ArrayBuffer.new(buf);
+    defer ab.free();
+    const uint8 = jsCreateClass(@intFromEnum(Classes.Uint8Array), ab.id);
+    defer jsFree(uint8);
+    jsGetRandomValues(uint8);
+    // Copy back the random values
+    const result = ab.bytes();
+    @memcpy(buf, result);
 }
 
-// https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto
-// https://github.com/cloudflare/workers-types/blob/master/index.d.ts#L1561
-// encrypt(
-//   algorithm: string | SubtleCryptoEncryptAlgorithm,
-//   key: CryptoKey,
-//   plainText: ArrayBuffer | ArrayBufferView
-// ): Promise<ArrayBuffer>;
-// decrypt(
-//   algorithm: string | SubtleCryptoEncryptAlgorithm,
-//   key: CryptoKey,
-//   cipherText: ArrayBuffer | ArrayBufferView
-// ): Promise<ArrayBuffer>;
-// sign(
-//   algorithm: string | SubtleCryptoSignAlgorithm,
-//   key: CryptoKey,
-//   data: ArrayBuffer | ArrayBufferView
-// ): Promise<ArrayBuffer>;
-// verify(
-//   algorithm: string | SubtleCryptoSignAlgorithm,
-//   key: CryptoKey,
-//   signature: ArrayBuffer | ArrayBufferView,
-//   data: ArrayBuffer | ArrayBufferView
-// ): Promise<boolean>;
-// digest(
-//   algorithm: Hash,
-//   data: ArrayBuffer | ArrayBufferView
-// ): Promise<ArrayBuffer>;
-// generateKey(
-//   algorithm: string | SubtleCryptoGenerateKeyAlgorithm,
-//   extractable: boolean,
-//   keyUsages: string[]
-// ): Promise<CryptoKey | CryptoKeyPair>;
-// deriveKey(
-//   algorithm: string | SubtleCryptoDeriveKeyAlgorithm,
-//   baseKey: CryptoKey,
-//   derivedKeyAlgorithm: string | SubtleCryptoImportKeyAlgorithm,
-//   extractable: boolean,
-//   keyUsages: string[]
-// ): Promise<CryptoKey>;
-// deriveBits(
-//   algorithm: string | SubtleCryptoDeriveKeyAlgorithm,
-//   baseKey: CryptoKey,
-//   length: number | null
-// ): Promise<ArrayBuffer>;
-// importKey(
-//   format: string,
-//   keyData: ArrayBuffer,
-//   algorithm: string | SubtleCryptoImportKeyAlgorithm,
-//   extractable: boolean,
-//   keyUsages: string[]
-// ): Promise<CryptoKey>;
-// exportKey(format: string, key: CryptoKey): Promise<ArrayBuffer>;
-// wrapKey(
-//   format: string,
-//   key: CryptoKey,
-//   wrappingKey: CryptoKey,
-//   wrapAlgorithm: string | SubtleCryptoEncryptAlgorithm
-// ): Promise<ArrayBuffer>;
-// unwrapKey(
-//   format: string,
-//   wrappedKey: ArrayBuffer | ArrayBufferView,
-//   unwrappingKey: CryptoKey,
-//   unwrapAlgorithm: string | SubtleCryptoEncryptAlgorithm,
-//   unwrappedKeyAlgorithm: string | SubtleCryptoImportKeyAlgorithm,
-//   extractable: boolean,
-//   keyUsages: string[]
-// ): Promise<CryptoKey>;
+/// Generate a random UUID v4 string.
+/// Returns a slice that is valid until the next call.
+pub fn randomUUID() []const u8 {
+    const rand = jsRandomUUID();
+    return std.mem.span(rand);
+}
+
+// ============================================================================
+// Digest Algorithm Enum
+// ============================================================================
+
+/// Supported hash algorithms for digest operations.
+pub const DigestAlgorithm = enum {
+    @"SHA-1",
+    @"SHA-256",
+    @"SHA-384",
+    @"SHA-512",
+    MD5,
+
+    pub fn toString(self: DigestAlgorithm) []const u8 {
+        return switch (self) {
+            .@"SHA-1" => "SHA-1",
+            .@"SHA-256" => "SHA-256",
+            .@"SHA-384" => "SHA-384",
+            .@"SHA-512" => "SHA-512",
+            .MD5 => "MD5",
+        };
+    }
+};
+
+// ============================================================================
+// Key Usages
+// ============================================================================
+
+/// Possible usages for a CryptoKey.
+pub const KeyUsage = enum {
+    encrypt,
+    decrypt,
+    sign,
+    verify,
+    deriveKey,
+    deriveBits,
+    wrapKey,
+    unwrapKey,
+
+    pub fn toString(self: KeyUsage) []const u8 {
+        return switch (self) {
+            .encrypt => "encrypt",
+            .decrypt => "decrypt",
+            .sign => "sign",
+            .verify => "verify",
+            .deriveKey => "deriveKey",
+            .deriveBits => "deriveBits",
+            .wrapKey => "wrapKey",
+            .unwrapKey => "unwrapKey",
+        };
+    }
+};
+
+/// Key format for import/export operations.
+pub const KeyFormat = enum {
+    raw,
+    pkcs8,
+    spki,
+    jwk,
+
+    pub fn toString(self: KeyFormat) []const u8 {
+        return switch (self) {
+            .raw => "raw",
+            .pkcs8 => "pkcs8",
+            .spki => "spki",
+            .jwk => "jwk",
+        };
+    }
+};
+
+// ============================================================================
+// Data Union (bytes or ArrayBuffer)
+// ============================================================================
 
 pub const Data = union(enum) {
-  bytes: []const u8,
-  arrayBuffer: ArrayBuffer,
+    bytes: []const u8,
+    arrayBuffer: *const ArrayBuffer,
 
-  pub fn toID (self: *const Data) u32 {
-    switch (self.*) {
-      .bytes => |b| return ArrayBuffer.new(b).id,
-      .arrayBuffer => |*ab| return ab.id,
+    pub fn toID(self: *const Data) u32 {
+        switch (self.*) {
+            .bytes => |b| return ArrayBuffer.new(b).id,
+            .arrayBuffer => |ab| return ab.id,
+        }
     }
-  }
 
-  pub fn free (self: *const Data, id: u32) void {
-    switch (self.*) {
-      .bytes => jsFree(id),
-      else => {},
+    pub fn freeIfOwned(self: *const Data, id: u32) void {
+        switch (self.*) {
+            .bytes => jsFree(id),
+            else => {},
+        }
     }
-  }
 };
 
-pub const SubtleCryptoDeriveKeyAlgorithm = struct {
-  name: []const u8,
-  salt: ?Data = null,
-  iterations: ?u32 = null,
-  hash: ?Hash = null,
-  public: ?CryptoKey = null,
-  info: ?Data = null,
-};
+// ============================================================================
+// Hash Union (string name or algorithm object)
+// ============================================================================
 
 pub const Hash = union(enum) {
-  string: []const u8,
-  algorithm: CryptoKeyKeyAlgorithm,
+    name: []const u8,
+    algorithm: DigestAlgorithm,
 
-  pub fn toID (self: *const Hash) u32 {
-    switch (self.*) {
-      .string => |str| return String(str).id,
-      .algorithm => |h| return h.toObject().id,
+    pub fn toID(self: *const Hash) u32 {
+        switch (self.*) {
+            .name => |str| return String.new(str).id,
+            .algorithm => |algo| return String.new(algo.toString()).id,
+        }
     }
-  }
-
-  pub fn free (id: u32) void {
-    jsFree(id);
-  }
 };
 
-pub const CryptoKeyKeyAlgorithm = struct {
-  name: []const u8,
+// ============================================================================
+// Algorithm Structs
+// ============================================================================
 
-  pub fn toObject (self: *const CryptoKeyKeyAlgorithm) Object {
-    const obj = Object.new();
-    obj.setText("name", self.name);
-    return obj;
-  }
+pub const CryptoKeyKeyAlgorithm = struct {
+    name: []const u8,
+
+    pub fn toObject(self: *const CryptoKeyKeyAlgorithm) Object {
+        const obj = Object.new();
+        obj.setText("name", self.name);
+        return obj;
+    }
 };
 
 pub const SubtleCryptoEncryptAlgorithm = struct {
-  name: []const u8,
-  iv: ?Data,
-  additionalData: ?Data,
-  tagLength: ?u32,
-  counter: ?Data,
-  length: ?u32,
-  label: ?Data,
+    name: []const u8,
+    iv: ?[]const u8 = null,
+    additionalData: ?[]const u8 = null,
+    tagLength: ?u32 = null,
+    counter: ?[]const u8 = null,
+    length: ?u32 = null,
+    label: ?[]const u8 = null,
 
-  pub fn toObject (self: *const SubtleCryptoEncryptAlgorithm) u32 {
-    const obj = Object.new();
-    obj.setText("name", self.name);
-    if (self.iv != null) {
-      const id = self.iv.?.toID();
-      defer self.iv.?.free(id);
-      obj.setID("iv", id);
+    pub fn toObject(self: *const SubtleCryptoEncryptAlgorithm) Object {
+        const obj = Object.new();
+        obj.setText("name", self.name);
+        if (self.iv) |iv| {
+            const ab = ArrayBuffer.new(iv);
+            obj.setID("iv", ab.id);
+        }
+        if (self.additionalData) |ad| {
+            const ab = ArrayBuffer.new(ad);
+            obj.setID("additionalData", ab.id);
+        }
+        if (self.tagLength) |tl| obj.setNum("tagLength", u32, tl);
+        if (self.counter) |c| {
+            const ab = ArrayBuffer.new(c);
+            obj.setID("counter", ab.id);
+        }
+        if (self.length) |l| obj.setNum("length", u32, l);
+        if (self.label) |lbl| {
+            const ab = ArrayBuffer.new(lbl);
+            obj.setID("label", ab.id);
+        }
+        return obj;
     }
-    if (self.additionalData != null) {
-      const id = self.additionalData.?.toID();
-      defer self.additionalData.?.free(id);
-      obj.setID("additionalData", id);
-    }
-    if (self.tagLength != null) obj.setNum("tagLength", self.tagLength.?);
-    if (self.counter != null) {
-      const id = self.counter.?.toID();
-      defer self.counter.?.free(id);
-      obj.setID("counter", id);
-    }
-    if (self.length != null) obj.setNum("length", self.length.?);
-    if (self.label != null) {
-      const id = self.label.?.toID();
-      defer self.label.?.free(id);
-      obj.setID("label", id);
-    }
-  }
 };
 
 pub const SubtleCryptoGenerateKeyAlgorithm = struct {
-  name: []const u8,
-  hash: ?Hash,
-  modulusLength: ?u32,
-  publicExponent: ?Data,
-  length: ?u32,
-  namedCurve: ?[]const u8,
+    name: []const u8,
+    hash: ?[]const u8 = null,
+    modulusLength: ?u32 = null,
+    publicExponent: ?[]const u8 = null,
+    length: ?u32 = null,
+    namedCurve: ?[]const u8 = null,
 
-  pub fn toObject (self: *const SubtleCryptoGenerateKeyAlgorithm) u32 {
-    const obj = Object.new();
-    obj.setText("name", self.name);
-    if (self.hash != null) {
-      const id = self.hash.?.toID();
-      defer self.hash.?.free(id);
-      obj.setID("hash", id);
+    pub fn toObject(self: *const SubtleCryptoGenerateKeyAlgorithm) Object {
+        const obj = Object.new();
+        obj.setText("name", self.name);
+        if (self.hash) |h| obj.setText("hash", h);
+        if (self.modulusLength) |ml| obj.setNum("modulusLength", u32, ml);
+        if (self.publicExponent) |pe| {
+            const ab = ArrayBuffer.new(pe);
+            const uint8 = jsCreateClass(@intFromEnum(Classes.Uint8Array), ab.id);
+            obj.setID("publicExponent", uint8);
+        }
+        if (self.length) |l| obj.setNum("length", u32, l);
+        if (self.namedCurve) |nc| obj.setText("namedCurve", nc);
+        return obj;
     }
-    if (self.modulusLength != null) obj.setNum("modulusLength", self.modulusLength.?);
-    if (self.publicExponent != null) {
-      const id = self.publicExponent.?.toID();
-      defer self.publicExponent.?.free(id);
-      obj.setID("publicExponent", id);
-    }
-    if (self.length != null) obj.setNum("length", self.length.?);
-    if (self.namedCurve != null) obj.setText("namedCurve", self.namedCurve.?);
-  }
 };
 
 pub const SubtleCryptoImportKeyAlgorithm = struct {
-  name: []const u8,
-  hash: ?Hash,
-  length: ?u32,
-  namedCurve: ?[]const u8,
-  compressed: ?bool,
+    name: []const u8,
+    hash: ?[]const u8 = null,
+    length: ?u32 = null,
+    namedCurve: ?[]const u8 = null,
 
-  pub fn toObject (self: *const SubtleCryptoImportKeyAlgorithm) u32 {
-    const obj = Object.new();
-    obj.setText("name", self.name);
-    if (self.hash != null) {
-      const id = self.hash.?.toID();
-      defer self.hash.?.free(id);
-      obj.setID("hash", id);
+    pub fn toObject(self: *const SubtleCryptoImportKeyAlgorithm) Object {
+        const obj = Object.new();
+        obj.setText("name", self.name);
+        if (self.hash) |h| obj.setText("hash", h);
+        if (self.length) |l| obj.setNum("length", u32, l);
+        if (self.namedCurve) |nc| obj.setText("namedCurve", nc);
+        return obj;
     }
-    if (self.length != null) obj.setNum("length", self.length.?);
-    if (self.namedCurve != null) obj.setText("namedCurve", self.namedCurve.?);
-    if (self.compressed != null) obj.setID("compressed", toJSBool(self.compressed));
-  }
 };
-
-// interface SubtleCryptoImportKeyAlgorithm {
-//   name: string;
-//   hash?: Hash;
-//   length?: number;
-//   namedCurve?: string;
-//   compressed?: boolean;
-// }
 
 pub const SubtleCryptoSignAlgorithm = struct {
-  name: []const u8,
-  hash: ?Hash,
-  dataLength: ?u32,
-  saltLength: ?u32,
+    name: []const u8,
+    hash: ?[]const u8 = null,
+    saltLength: ?u32 = null,
 
-  pub fn toObject (self: *const SubtleCryptoSignAlgorithm) u32 {
-    const obj = Object.new();
-    obj.setText("name", self.name);
-    if (self.hash != null) {
-      const id = self.hash.?.toID();
-      defer self.hash.?.free(id);
-      obj.setID("hash", id);
+    pub fn toObject(self: *const SubtleCryptoSignAlgorithm) Object {
+        const obj = Object.new();
+        obj.setText("name", self.name);
+        if (self.hash) |h| obj.setText("hash", h);
+        if (self.saltLength) |sl| obj.setNum("saltLength", u32, sl);
+        return obj;
     }
-    if (self.dataLength != null) obj.setNum("dataLength", self.dataLength.?);
-    if (self.saltLength != null) obj.setNum("saltLength", self.saltLength.?);
-  }
 };
+
+pub const SubtleCryptoDeriveKeyAlgorithm = struct {
+    name: []const u8,
+    salt: ?[]const u8 = null,
+    iterations: ?u32 = null,
+    hash: ?[]const u8 = null,
+    public: ?*const CryptoKey = null,
+    info: ?[]const u8 = null,
+
+    pub fn toObject(self: *const SubtleCryptoDeriveKeyAlgorithm) Object {
+        const obj = Object.new();
+        obj.setText("name", self.name);
+        if (self.salt) |s| {
+            const ab = ArrayBuffer.new(s);
+            obj.setID("salt", ab.id);
+        }
+        if (self.iterations) |i| obj.setNum("iterations", u32, i);
+        if (self.hash) |h| obj.setText("hash", h);
+        if (self.public) |p| obj.setID("public", p.id);
+        if (self.info) |i| {
+            const ab = ArrayBuffer.new(i);
+            obj.setID("info", ab.id);
+        }
+        return obj;
+    }
+};
+
+// ============================================================================
+// CryptoKey
+// ============================================================================
 
 pub const CryptoKey = struct {
-  id: u32,
+    id: u32,
 
-  pub fn init (jsPtr: u32) CryptoKey {
-    return CryptoKey{ .id = jsPtr };
-  }
-
-  pub fn free (self: *const CryptoKey) void {
-    jsFree(self);
-  }
-
-  pub fn getType (self: *const CryptoKey) []const u8 {
-    return getStringFree(getObjectValue(self.id, "type"));
-  }
-
-  pub fn extractable (self: *const CryptoKey) bool {
-    const b = getObjectValue(self.id, "extractable");
-    return b == true;
-  }
-
-  // pub fn algorithm (self: *const CryptoKey) CryptoKeyAlgorithmVariant {
-  //   return CryptoKeyAlgorithmVariant.init(getObjectValue(self.id, "algorithm"));
-  // }
-
-  pub fn usages (self: *const CryptoKey) [][]const u8 {
-    const arr = Array.new(getObjectValue(self.id, "usages"));
-    const size = arr.length();
-    const slice: [][]const u8 = &[size][]const u8;
-    var index = 0;
-    while (index < size) {
-      const str = getStringFree(arr.get(index));
-      slice = (slice ++ str);
-      index += 1;
+    pub fn init(jsPtr: u32) CryptoKey {
+        return CryptoKey{ .id = jsPtr };
     }
-  }
+
+    pub fn free(self: *const CryptoKey) void {
+        jsFree(self.id);
+    }
+
+    /// Get the key type: "public", "private", or "secret".
+    pub fn getType(self: *const CryptoKey) []const u8 {
+        return getStringFree(getObjectValue(self.id, "type"));
+    }
+
+    /// Whether the key can be exported.
+    pub fn extractable(self: *const CryptoKey) bool {
+        const val = getObjectValue(self.id, "extractable");
+        return val == common.True;
+    }
+
+    /// Get the algorithm name.
+    pub fn algorithmName(self: *const CryptoKey) []const u8 {
+        const algo = getObjectValue(self.id, "algorithm");
+        if (algo > common.DefaultValueSize) {
+            const name = getObjectValue(algo, "name");
+            if (name > common.DefaultValueSize) {
+                return getStringFree(name);
+            }
+        }
+        return "";
+    }
 };
+
+// ============================================================================
+// CryptoKeyPair
+// ============================================================================
 
 pub const CryptoKeyPair = struct {
-  publicKey: CryptoKey,
-  privateKey: CryptoKey,
+    publicKey: CryptoKey,
+    privateKey: CryptoKey,
 
-  pub fn init (jsPtr: u32) CryptoKeyPair {
-    // grab each CryptoKey
-    return CryptoKeyPair{
-      .publicKey = CryptoKey.init(getObjectValue(jsPtr, "publicKey")),
-      .privateKey = CryptoKey.init(getObjectValue(jsPtr, "privateKey")),
-    };
-  }
+    pub fn init(jsPtr: u32) CryptoKeyPair {
+        return CryptoKeyPair{
+            .publicKey = CryptoKey.init(getObjectValue(jsPtr, "publicKey")),
+            .privateKey = CryptoKey.init(getObjectValue(jsPtr, "privateKey")),
+        };
+    }
 
-  pub fn free (self: *const CryptoKeyPair) void {
-    self.publicKey.free();
-    self.privateKey.free();
-  }
+    pub fn free(self: *const CryptoKeyPair) void {
+        self.publicKey.free();
+        self.privateKey.free();
+    }
 };
 
-// pub const CryptoKeyAlgorithmVariant = union(enum) {
-//   cryptoKeyKeyAlgorithm: CryptoKeyKeyAlgorithm,
-//   cryptoKeyAesKeyAlgorithm: CryptoKeyAesKeyAlgorithm,
-//   cryptoKeyHmacKeyAlgorithm: CryptoKeyHmacKeyAlgorithm,
-//   cryptoKeyRsaKeyAlgorithm: CryptoKeyRsaKeyAlgorithm,
-//   cryptoKeyEllipticKeyAlgorithm: CryptoKeyEllipticKeyAlgorithm,
-//   cryptoKeyVoprfKeyAlgorithm: CryptoKeyVoprfKeyAlgorithm,
-//   cryptoKeyOprfKeyAlgorithm: CryptoKeyOprfKeyAlgorithm,
+// ============================================================================
+// DigestStream (Cloudflare-specific streaming hash)
+// Note: DigestStream requires a custom JS binding to instantiate.
+// For now, use SubtleCrypto.digest() for hashing needs.
+// ============================================================================
 
-//   pub fn init (jsPtr: u32) CryptoKeyAlgorithmVariant {
-//     // get the "name" property
+pub const DigestStream = struct {
+    id: u32,
 
-//     // depending upon the name, build the appropriate algo.
-//   }
-// };
+    /// Create a new DigestStream - requires JS runtime support.
+    /// Most workers should use SubtleCrypto.digest() instead.
+    pub fn init(jsPtr: u32) DigestStream {
+        return DigestStream{ .id = jsPtr };
+    }
 
-// interface CryptoKeyAesKeyAlgorithm {
-//   name: string;
-//   length: number;
-// }
+    pub fn free(self: *const DigestStream) void {
+        if (self.id > common.DefaultValueSize) {
+            jsFree(self.id);
+        }
+    }
 
-// interface CryptoKeyHmacKeyAlgorithm {
-//   name: string;
-//   hash: CryptoKeyKeyAlgorithm;
-//   length: number;
-// }
+    /// Check if the DigestStream is valid.
+    pub fn isValid(self: *const DigestStream) bool {
+        return self.id > common.DefaultValueSize;
+    }
 
-// interface CryptoKeyRsaKeyAlgorithm {
-//   name: string;
-//   modulusLength: number;
-//   publicExponent: ArrayBuffer;
-//   hash?: CryptoKeyKeyAlgorithm;
-// }
+    /// Get the underlying WritableStream for piping.
+    pub fn asWritableStream(self: *const DigestStream) u32 {
+        return self.id;
+    }
 
-// interface CryptoKeyEllipticKeyAlgorithm {
-//   name: string;
-//   namedCurve: string;
-// }
+    /// Get the digest result (call after the stream is closed).
+    /// Returns the hash as bytes.
+    pub fn getDigest(self: *const DigestStream) ?[]const u8 {
+        if (self.id <= common.DefaultValueSize) return null;
 
-// interface CryptoKeyVoprfKeyAlgorithm {
-//   name: string;
-//   hash: CryptoKeyKeyAlgorithm;
-//   namedCurve: string;
-// }
+        const digestPromise = getObjectValue(self.id, "digest");
+        if (digestPromise <= common.DefaultValueSize) return null;
 
-// interface CryptoKeyOprfKeyAlgorithm {
-//   name: string;
-//   namedCurve: string;
-// }
+        // Await the promise
+        const result = jsAsyncFnCall(digestPromise, 0);
+        if (result <= common.DefaultValueSize) return null;
+
+        // Convert ArrayBuffer to bytes
+        const ab = ArrayBuffer.init(result);
+        defer ab.free();
+        return ab.bytes();
+    }
+};
+
+// ============================================================================
+// SubtleCrypto
+// ============================================================================
+
+/// The SubtleCrypto interface provides cryptographic functions.
+/// Access via `SubtleCrypto.get()` which returns the global crypto.subtle object.
+pub const SubtleCrypto = struct {
+    id: u32,
+
+    /// Get the global crypto.subtle object.
+    pub fn get() SubtleCrypto {
+        return SubtleCrypto{ .id = jsGetSubtleCrypto() };
+    }
+
+    pub fn free(self: *const SubtleCrypto) void {
+        jsFree(self.id);
+    }
+
+    // ========================================================================
+    // digest - Hash data
+    // ========================================================================
+
+    /// Compute a digest (hash) of the given data.
+    /// Returns the hash as bytes, or null on error.
+    pub fn digest(self: *const SubtleCrypto, algorithm: DigestAlgorithm, data: []const u8) ?[]const u8 {
+        const algoStr = String.new(algorithm.toString());
+        defer algoStr.free();
+
+        const dataAb = ArrayBuffer.new(data);
+        defer dataAb.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.push(&algoStr);
+        args.pushID(dataAb.id);
+
+        const digestFn = getObjectValue(self.id, "digest");
+        if (digestFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(digestFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        const resultAb = ArrayBuffer.init(resultPromise);
+        defer resultAb.free();
+        return resultAb.bytes();
+    }
+
+    // ========================================================================
+    // generateKey - Generate a new key or key pair
+    // ========================================================================
+
+    /// Generate a symmetric key.
+    pub fn generateKey(
+        self: *const SubtleCrypto,
+        algorithm: *const SubtleCryptoGenerateKeyAlgorithm,
+        extractable_param: bool,
+        keyUsages: []const KeyUsage,
+    ) ?CryptoKey {
+        const algoObj = algorithm.toObject();
+        defer algoObj.free();
+
+        const usagesArr = Array.new();
+        defer usagesArr.free();
+        for (keyUsages) |usage| {
+            const usageStr = String.new(usage.toString());
+            usagesArr.push(&usageStr);
+        }
+
+        const args = Array.new();
+        defer args.free();
+        args.pushID(algoObj.id);
+        args.pushID(toJSBool(extractable_param));
+        args.pushID(usagesArr.id);
+
+        const generateKeyFn = getObjectValue(self.id, "generateKey");
+        if (generateKeyFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(generateKeyFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        return CryptoKey.init(resultPromise);
+    }
+
+    /// Generate an asymmetric key pair.
+    pub fn generateKeyPair(
+        self: *const SubtleCrypto,
+        algorithm: *const SubtleCryptoGenerateKeyAlgorithm,
+        extractable_param: bool,
+        keyUsages: []const KeyUsage,
+    ) ?CryptoKeyPair {
+        const algoObj = algorithm.toObject();
+        defer algoObj.free();
+
+        const usagesArr = Array.new();
+        defer usagesArr.free();
+        for (keyUsages) |usage| {
+            const usageStr = String.new(usage.toString());
+            usagesArr.push(&usageStr);
+        }
+
+        const args = Array.new();
+        defer args.free();
+        args.pushID(algoObj.id);
+        args.pushID(toJSBool(extractable_param));
+        args.pushID(usagesArr.id);
+
+        const generateKeyFn = getObjectValue(self.id, "generateKey");
+        if (generateKeyFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(generateKeyFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        return CryptoKeyPair.init(resultPromise);
+    }
+
+    // ========================================================================
+    // importKey - Import a key from external format
+    // ========================================================================
+
+    /// Import a key from raw bytes or other format.
+    pub fn importKey(
+        self: *const SubtleCrypto,
+        format: KeyFormat,
+        keyData: []const u8,
+        algorithm: *const SubtleCryptoImportKeyAlgorithm,
+        extractable_param: bool,
+        keyUsages: []const KeyUsage,
+    ) ?CryptoKey {
+        const formatStr = String.new(format.toString());
+        defer formatStr.free();
+
+        const keyDataAb = ArrayBuffer.new(keyData);
+        defer keyDataAb.free();
+
+        const algoObj = algorithm.toObject();
+        defer algoObj.free();
+
+        const usagesArr = Array.new();
+        defer usagesArr.free();
+        for (keyUsages) |usage| {
+            const usageStr = String.new(usage.toString());
+            usagesArr.push(&usageStr);
+        }
+
+        const args = Array.new();
+        defer args.free();
+        args.push(&formatStr);
+        args.pushID(keyDataAb.id);
+        args.pushID(algoObj.id);
+        args.pushID(toJSBool(extractable_param));
+        args.pushID(usagesArr.id);
+
+        const importKeyFn = getObjectValue(self.id, "importKey");
+        if (importKeyFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(importKeyFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        return CryptoKey.init(resultPromise);
+    }
+
+    // ========================================================================
+    // exportKey - Export a key to external format
+    // ========================================================================
+
+    /// Export a key to the specified format.
+    /// Returns the key data as bytes, or null on error.
+    pub fn exportKey(self: *const SubtleCrypto, format: KeyFormat, key: *const CryptoKey) ?[]const u8 {
+        const formatStr = String.new(format.toString());
+        defer formatStr.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.push(&formatStr);
+        args.pushID(key.id);
+
+        const exportKeyFn = getObjectValue(self.id, "exportKey");
+        if (exportKeyFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(exportKeyFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        const resultAb = ArrayBuffer.init(resultPromise);
+        defer resultAb.free();
+        return resultAb.bytes();
+    }
+
+    // ========================================================================
+    // encrypt - Encrypt data
+    // ========================================================================
+
+    /// Encrypt data using the specified algorithm and key.
+    /// Returns the ciphertext as bytes, or null on error.
+    pub fn encrypt(
+        self: *const SubtleCrypto,
+        algorithm: *const SubtleCryptoEncryptAlgorithm,
+        key: *const CryptoKey,
+        data: []const u8,
+    ) ?[]const u8 {
+        const algoObj = algorithm.toObject();
+        defer algoObj.free();
+
+        const dataAb = ArrayBuffer.new(data);
+        defer dataAb.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.pushID(algoObj.id);
+        args.pushID(key.id);
+        args.pushID(dataAb.id);
+
+        const encryptFn = getObjectValue(self.id, "encrypt");
+        if (encryptFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(encryptFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        const resultAb = ArrayBuffer.init(resultPromise);
+        defer resultAb.free();
+        return resultAb.bytes();
+    }
+
+    // ========================================================================
+    // decrypt - Decrypt data
+    // ========================================================================
+
+    /// Decrypt data using the specified algorithm and key.
+    /// Returns the plaintext as bytes, or null on error.
+    pub fn decrypt(
+        self: *const SubtleCrypto,
+        algorithm: *const SubtleCryptoEncryptAlgorithm,
+        key: *const CryptoKey,
+        data: []const u8,
+    ) ?[]const u8 {
+        const algoObj = algorithm.toObject();
+        defer algoObj.free();
+
+        const dataAb = ArrayBuffer.new(data);
+        defer dataAb.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.pushID(algoObj.id);
+        args.pushID(key.id);
+        args.pushID(dataAb.id);
+
+        const decryptFn = getObjectValue(self.id, "decrypt");
+        if (decryptFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(decryptFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        const resultAb = ArrayBuffer.init(resultPromise);
+        defer resultAb.free();
+        return resultAb.bytes();
+    }
+
+    // ========================================================================
+    // sign - Sign data
+    // ========================================================================
+
+    /// Sign data using the specified algorithm and key.
+    /// Returns the signature as bytes, or null on error.
+    pub fn sign(
+        self: *const SubtleCrypto,
+        algorithm: *const SubtleCryptoSignAlgorithm,
+        key: *const CryptoKey,
+        data: []const u8,
+    ) ?[]const u8 {
+        const algoObj = algorithm.toObject();
+        defer algoObj.free();
+
+        const dataAb = ArrayBuffer.new(data);
+        defer dataAb.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.pushID(algoObj.id);
+        args.pushID(key.id);
+        args.pushID(dataAb.id);
+
+        const signFn = getObjectValue(self.id, "sign");
+        if (signFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(signFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        const resultAb = ArrayBuffer.init(resultPromise);
+        defer resultAb.free();
+        return resultAb.bytes();
+    }
+
+    // ========================================================================
+    // verify - Verify signature
+    // ========================================================================
+
+    /// Verify a signature against data.
+    /// Returns true if the signature is valid, false otherwise.
+    pub fn verify(
+        self: *const SubtleCrypto,
+        algorithm: *const SubtleCryptoSignAlgorithm,
+        key: *const CryptoKey,
+        signature: []const u8,
+        data: []const u8,
+    ) bool {
+        const algoObj = algorithm.toObject();
+        defer algoObj.free();
+
+        const sigAb = ArrayBuffer.new(signature);
+        defer sigAb.free();
+
+        const dataAb = ArrayBuffer.new(data);
+        defer dataAb.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.pushID(algoObj.id);
+        args.pushID(key.id);
+        args.pushID(sigAb.id);
+        args.pushID(dataAb.id);
+
+        const verifyFn = getObjectValue(self.id, "verify");
+        if (verifyFn <= common.DefaultValueSize) return false;
+
+        const resultPromise = jsAsyncFnCall(verifyFn, args.id);
+        return resultPromise == common.True;
+    }
+
+    // ========================================================================
+    // deriveKey - Derive a new key from a base key
+    // ========================================================================
+
+    /// Derive a new key from a base key.
+    pub fn deriveKey(
+        self: *const SubtleCrypto,
+        algorithm: *const SubtleCryptoDeriveKeyAlgorithm,
+        baseKey: *const CryptoKey,
+        derivedKeyAlgorithm: *const SubtleCryptoImportKeyAlgorithm,
+        extractable_param: bool,
+        keyUsages: []const KeyUsage,
+    ) ?CryptoKey {
+        const algoObj = algorithm.toObject();
+        defer algoObj.free();
+
+        const derivedAlgoObj = derivedKeyAlgorithm.toObject();
+        defer derivedAlgoObj.free();
+
+        const usagesArr = Array.new();
+        defer usagesArr.free();
+        for (keyUsages) |usage| {
+            const usageStr = String.new(usage.toString());
+            usagesArr.push(&usageStr);
+        }
+
+        const args = Array.new();
+        defer args.free();
+        args.pushID(algoObj.id);
+        args.pushID(baseKey.id);
+        args.pushID(derivedAlgoObj.id);
+        args.pushID(toJSBool(extractable_param));
+        args.pushID(usagesArr.id);
+
+        const deriveKeyFn = getObjectValue(self.id, "deriveKey");
+        if (deriveKeyFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(deriveKeyFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        return CryptoKey.init(resultPromise);
+    }
+
+    // ========================================================================
+    // deriveBits - Derive bits from a base key
+    // ========================================================================
+
+    /// Derive raw bits from a base key.
+    /// Returns the derived bits as bytes, or null on error.
+    pub fn deriveBits(
+        self: *const SubtleCrypto,
+        algorithm: *const SubtleCryptoDeriveKeyAlgorithm,
+        baseKey: *const CryptoKey,
+        length: u32,
+    ) ?[]const u8 {
+        const algoObj = algorithm.toObject();
+        defer algoObj.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.pushID(algoObj.id);
+        args.pushID(baseKey.id);
+        args.pushNum(u32, length);
+
+        const deriveBitsFn = getObjectValue(self.id, "deriveBits");
+        if (deriveBitsFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(deriveBitsFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        const resultAb = ArrayBuffer.init(resultPromise);
+        defer resultAb.free();
+        return resultAb.bytes();
+    }
+
+    // ========================================================================
+    // wrapKey - Wrap a key for secure storage/transmission
+    // ========================================================================
+
+    /// Wrap a key for secure storage or transmission.
+    /// Returns the wrapped key as bytes, or null on error.
+    pub fn wrapKey(
+        self: *const SubtleCrypto,
+        format: KeyFormat,
+        key: *const CryptoKey,
+        wrappingKey: *const CryptoKey,
+        wrapAlgorithm: *const SubtleCryptoEncryptAlgorithm,
+    ) ?[]const u8 {
+        const formatStr = String.new(format.toString());
+        defer formatStr.free();
+
+        const algoObj = wrapAlgorithm.toObject();
+        defer algoObj.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.push(&formatStr);
+        args.pushID(key.id);
+        args.pushID(wrappingKey.id);
+        args.pushID(algoObj.id);
+
+        const wrapKeyFn = getObjectValue(self.id, "wrapKey");
+        if (wrapKeyFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(wrapKeyFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        const resultAb = ArrayBuffer.init(resultPromise);
+        defer resultAb.free();
+        return resultAb.bytes();
+    }
+
+    // ========================================================================
+    // unwrapKey - Unwrap a wrapped key
+    // ========================================================================
+
+    /// Unwrap a previously wrapped key.
+    pub fn unwrapKey(
+        self: *const SubtleCrypto,
+        format: KeyFormat,
+        wrappedKey: []const u8,
+        unwrappingKey: *const CryptoKey,
+        unwrapAlgorithm: *const SubtleCryptoEncryptAlgorithm,
+        unwrappedKeyAlgorithm: *const SubtleCryptoImportKeyAlgorithm,
+        extractable_param: bool,
+        keyUsages: []const KeyUsage,
+    ) ?CryptoKey {
+        const formatStr = String.new(format.toString());
+        defer formatStr.free();
+
+        const wrappedKeyAb = ArrayBuffer.new(wrappedKey);
+        defer wrappedKeyAb.free();
+
+        const unwrapAlgoObj = unwrapAlgorithm.toObject();
+        defer unwrapAlgoObj.free();
+
+        const unwrappedAlgoObj = unwrappedKeyAlgorithm.toObject();
+        defer unwrappedAlgoObj.free();
+
+        const usagesArr = Array.new();
+        defer usagesArr.free();
+        for (keyUsages) |usage| {
+            const usageStr = String.new(usage.toString());
+            usagesArr.push(&usageStr);
+        }
+
+        const args = Array.new();
+        defer args.free();
+        args.push(&formatStr);
+        args.pushID(wrappedKeyAb.id);
+        args.pushID(unwrappingKey.id);
+        args.pushID(unwrapAlgoObj.id);
+        args.pushID(unwrappedAlgoObj.id);
+        args.pushID(toJSBool(extractable_param));
+        args.pushID(usagesArr.id);
+
+        const unwrapKeyFn = getObjectValue(self.id, "unwrapKey");
+        if (unwrapKeyFn <= common.DefaultValueSize) return null;
+
+        const resultPromise = jsAsyncFnCall(unwrapKeyFn, args.id);
+        if (resultPromise <= common.DefaultValueSize) return null;
+
+        return CryptoKey.init(resultPromise);
+    }
+
+    // ========================================================================
+    // timingSafeEqual - Compare two buffers in constant time
+    // ========================================================================
+
+    /// Compare two buffers in constant time (timing-safe).
+    /// This is a Cloudflare extension to the Web Crypto API.
+    pub fn timingSafeEqual(self: *const SubtleCrypto, a: []const u8, b: []const u8) bool {
+        const aAb = ArrayBuffer.new(a);
+        defer aAb.free();
+
+        const bAb = ArrayBuffer.new(b);
+        defer bAb.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.pushID(aAb.id);
+        args.pushID(bAb.id);
+
+        const timingSafeEqualFn = getObjectValue(self.id, "timingSafeEqual");
+        if (timingSafeEqualFn <= common.DefaultValueSize) return false;
+
+        const result = jsFnCall(timingSafeEqualFn, args.id);
+        return result == common.True;
+    }
+};
+
+// ============================================================================
+// Convenience functions
+// ============================================================================
+
+/// Convenience function to compute a SHA-256 hash.
+pub fn sha256(data: []const u8) ?[]const u8 {
+    const subtle = SubtleCrypto.get();
+    defer subtle.free();
+    return subtle.digest(.@"SHA-256", data);
+}
+
+/// Convenience function to compute a SHA-1 hash.
+pub fn sha1(data: []const u8) ?[]const u8 {
+    const subtle = SubtleCrypto.get();
+    defer subtle.free();
+    return subtle.digest(.@"SHA-1", data);
+}
+
+/// Convenience function to compute a SHA-512 hash.
+pub fn sha512(data: []const u8) ?[]const u8 {
+    const subtle = SubtleCrypto.get();
+    defer subtle.free();
+    return subtle.digest(.@"SHA-512", data);
+}
+
+/// Convenience function to compute an MD5 hash (not for security!).
+pub fn md5(data: []const u8) ?[]const u8 {
+    const subtle = SubtleCrypto.get();
+    defer subtle.free();
+    return subtle.digest(.MD5, data);
+}

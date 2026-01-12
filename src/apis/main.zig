@@ -20,16 +20,25 @@ pub const CacheQueryOptions = cache.CacheQueryOptions;
 const crypto = @import("crypto.zig");
 pub const getRandomValues = crypto.getRandomValues;
 pub const randomUUID = crypto.randomUUID;
+pub const DigestAlgorithm = crypto.DigestAlgorithm;
+pub const KeyUsage = crypto.KeyUsage;
+pub const KeyFormat = crypto.KeyFormat;
 pub const Data = crypto.Data;
-pub const SubtleCryptoDeriveKeyAlgorithm = crypto.SubtleCryptoDeriveKeyAlgorithm;
 pub const Hash = crypto.Hash;
 pub const CryptoKeyKeyAlgorithm = crypto.CryptoKeyKeyAlgorithm;
 pub const SubtleCryptoEncryptAlgorithm = crypto.SubtleCryptoEncryptAlgorithm;
 pub const SubtleCryptoGenerateKeyAlgorithm = crypto.SubtleCryptoGenerateKeyAlgorithm;
 pub const SubtleCryptoImportKeyAlgorithm = crypto.SubtleCryptoImportKeyAlgorithm;
 pub const SubtleCryptoSignAlgorithm = crypto.SubtleCryptoSignAlgorithm;
+pub const SubtleCryptoDeriveKeyAlgorithm = crypto.SubtleCryptoDeriveKeyAlgorithm;
 pub const CryptoKey = crypto.CryptoKey;
 pub const CryptoKeyPair = crypto.CryptoKeyPair;
+pub const DigestStream = crypto.DigestStream;
+pub const SubtleCrypto = crypto.SubtleCrypto;
+pub const sha256 = crypto.sha256;
+pub const sha1 = crypto.sha1;
+pub const sha512 = crypto.sha512;
+pub const md5 = crypto.md5;
 
 // D1 Database API
 const d1 = @import("d1.zig");
