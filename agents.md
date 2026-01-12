@@ -169,6 +169,126 @@ fn examples(ctx: *FetchContext) void {
     
     // Error with message
     ctx.throw(500, "Internal error");
+    
+    // Binary data
+    const data = [_]u8{ 0x89, 0x50, 0x4E, 0x47 }; // PNG magic
+    ctx.bytes(&data, 200); // application/octet-stream
+    ctx.bytesWithType(&data, "image/png", 200);
+    
+    // File download (sets Content-Disposition header)
+    ctx.file(fileData, "report.pdf", "application/pdf");
+    
+    // Streaming response
+    const stream = getReadableStream();
+    ctx.stream(&stream, "application/octet-stream", 200);
+}
+```
+
+## Request Helpers
+
+```zig
+fn handleRequest(ctx: *FetchContext) void {
+    // Get a single header value (shorthand)
+    const auth = ctx.header("Authorization") orelse {
+        ctx.json(.{ .err = "Unauthorized" }, 401);
+        return;
+    };
+    
+    // Get HTTP method
+    const method = ctx.method();
+    if (method == .Post or method == .Put) {
+        // handle body
+    }
+    
+    // Content negotiation - check what client accepts
+    if (ctx.accepts("application/json")) {
+        ctx.json(.{ .data = "value" }, 200);
+    } else if (ctx.accepts("text/html")) {
+        ctx.html("<p>value</p>", 200);
+    } else {
+        ctx.text("value", 200);
+    }
+    
+    // Parse FormData body (multipart/form-data)
+    var form = ctx.bodyFormData() orelse {
+        ctx.throw(400, "Invalid form data");
+        return;
+    };
+    defer form.free();
+    
+    if (form.get("file")) |entry| {
+        switch (entry) {
+            .field => |value| { _ = value; },
+            .file => |file| {
+                defer file.free();
+                const filename = file.name();
+                const content = file.bytes();
+                _ = filename;
+                _ = content;
+            },
+        }
+    }
+    
+    // Get body as stream for large payloads
+    const stream = ctx.bodyStream();
+    defer stream.free();
+    
+    const reader = stream.getReader();
+    defer reader.free();
+    
+    while (true) {
+        const result = reader.read();
+        if (result.done) break;
+        if (result.value) |chunk| {
+            // process chunk
+            _ = chunk;
+        }
+    }
+}
+```
+
+## Middleware
+
+```zig
+const workers = @import("cf-workerz");
+const FetchContext = workers.FetchContext;
+const Route = workers.Router;
+const Middleware = workers.Middleware;
+const MiddlewareFn = workers.MiddlewareFn;
+
+// Define middleware functions
+fn corsMiddleware(ctx: *FetchContext) bool {
+    // Would set CORS headers here
+    _ = ctx;
+    return true; // Continue to next middleware/handler
+}
+
+fn authMiddleware(ctx: *FetchContext) bool {
+    const token = ctx.header("Authorization") orelse {
+        ctx.json(.{ .err = "Unauthorized" }, 401);
+        return false; // Stop the chain
+    };
+    // Validate token...
+    _ = token;
+    return true;
+}
+
+fn logMiddleware(ctx: *FetchContext) bool {
+    // Log request details
+    _ = ctx;
+    return true;
+}
+
+// Create middleware chain
+const middleware = Middleware{
+    .before = &.{ corsMiddleware, authMiddleware, logMiddleware },
+    .after = &.{}, // Optional after-handlers
+};
+
+// Dispatch with middleware
+export fn handleFetch(ctx_id: u32) void {
+    const ctx = FetchContext.init(ctx_id) catch return;
+    Route.dispatchWithMiddleware(routes, ctx, middleware);
 }
 ```
 

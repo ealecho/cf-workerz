@@ -96,6 +96,8 @@ pub const AsyncFunction = function.AsyncFunction;
 // headers.zig exports
 pub const headers = @import("headers.zig");
 pub const Headers = headers.Headers;
+pub const HeadersIterator = headers.HeadersIterator;
+pub const HeaderEntry = headers.HeaderEntry;
 
 // object.zig exports
 pub const object = @import("object.zig");

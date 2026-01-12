@@ -80,6 +80,8 @@ pub const FileOptions = bindings.FileOptions;
 pub const Function = bindings.Function;
 pub const AsyncFunction = bindings.AsyncFunction;
 pub const Headers = bindings.Headers;
+pub const HeadersIterator = bindings.HeadersIterator;
+pub const HeaderEntry = bindings.HeaderEntry;
 pub const Object = bindings.Object;
 pub const Record = bindings.Record;
 pub const Request = bindings.Request;
@@ -139,6 +141,9 @@ pub const Router = router.Route; // Main router entry point
 pub const Params = router.Params;
 pub const matchPath = router.matchPath;
 pub const MAX_PARAMS = router.MAX_PARAMS;
+pub const Middleware = router.Middleware;
+pub const MiddlewareFn = router.MiddlewareFn;
+pub const MAX_MIDDLEWARE = router.MAX_MIDDLEWARE;
 
 // ** EXPORTS **
 

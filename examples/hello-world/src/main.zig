@@ -2,10 +2,12 @@
 //
 // This example demonstrates:
 // - Built-in Router with path parameters and wildcards
+// - Middleware support (before/after hooks)
 // - Ergonomic D1 API (query, one, execute) with struct mapping
 // - JsonBody for parsing JSON request bodies
 // - ctx.json() with automatic struct serialization
-// - Response helpers (ctx.text, ctx.redirect, ctx.throw)
+// - Response helpers (ctx.text, ctx.redirect, ctx.throw, ctx.bytes, ctx.file, ctx.stream)
+// - Request helpers (ctx.header, ctx.accepts, ctx.bodyFormData, ctx.bodyStream)
 // - URL and URLSearchParams APIs
 // - FormData API for form handling
 //
@@ -29,6 +31,14 @@
 //   GET  /test/query          - Test ctx.query() and ctx.url() helpers
 //   GET  /test/headers         - Test Headers iterator API
 //   POST /test/streams         - Test Streams API (body reading)
+//
+// New Router Enhancement Tests:
+//   GET  /test/header-helper   - Test ctx.header() shorthand
+//   GET  /test/accepts         - Test ctx.accepts() content negotiation
+//   GET  /test/bytes           - Test ctx.bytes() binary response
+//   GET  /test/download        - Test ctx.file() download response
+//   POST /test/body-formdata   - Test ctx.bodyFormData() helper
+//   ANY  /api/protected/*      - Test middleware with auth (dispatchWithMiddleware)
 
 const std = @import("std");
 const workers = @import("cf-workerz");
@@ -88,6 +98,13 @@ const routes: []const Route = &.{
     Route.post("/test/formdata-entries", handleTestFormDataEntries),
     Route.post("/test/reader", handleTestReader),
     Route.get("/test/file", handleTestFile),
+
+    // New router enhancement tests
+    Route.get("/test/header-helper", handleTestHeaderHelper),
+    Route.get("/test/accepts", handleTestAccepts),
+    Route.get("/test/bytes", handleTestBytes),
+    Route.get("/test/download", handleTestDownload),
+    Route.post("/test/body-formdata", handleTestBodyFormData),
 };
 
 // ============================================================================
@@ -826,6 +843,137 @@ fn handleTestFile(ctx: *FetchContext) void {
             .size = binFileSize,
             .type = binFileType,
             .lastModified = binLastMod,
+        },
+    }, 200);
+}
+
+// ============================================================================
+// New Router Enhancement Test Handlers
+// ============================================================================
+
+/// Test ctx.header() shorthand for reading request headers
+/// GET /test/header-helper
+fn handleTestHeaderHelper(ctx: *FetchContext) void {
+    // Use ctx.header() shorthand instead of ctx.req.headers().getText()
+    const userAgent = ctx.header("User-Agent") orelse "(not set)";
+    const accept = ctx.header("Accept") orelse "(not set)";
+    const host = ctx.header("Host") orelse "(not set)";
+    const customHeader = ctx.header("X-Custom-Header") orelse "(not set)";
+    const authorization = ctx.header("Authorization") orelse "(not set)";
+
+    ctx.json(.{
+        .api = "ctx.header() helper",
+        .headers = .{
+            .userAgent = userAgent,
+            .accept = accept,
+            .host = host,
+            .customHeader = customHeader,
+            .authorization = authorization,
+        },
+    }, 200);
+}
+
+/// Test ctx.accepts() for content negotiation
+/// GET /test/accepts
+fn handleTestAccepts(ctx: *FetchContext) void {
+    // Check what content types the client accepts
+    const acceptsJson = ctx.accepts("application/json");
+    const acceptsHtml = ctx.accepts("text/html");
+    const acceptsXml = ctx.accepts("application/xml");
+    const acceptsText = ctx.accepts("text/plain");
+    const acceptsImage = ctx.accepts("image/png");
+
+    // Get the Accept header for reference
+    const acceptHeader = ctx.header("Accept") orelse "(not set)";
+
+    // Respond based on what client accepts
+    if (ctx.accepts("application/json")) {
+        ctx.json(.{
+            .api = "ctx.accepts() content negotiation",
+            .acceptHeader = acceptHeader,
+            .accepts = .{
+                .json = acceptsJson,
+                .html = acceptsHtml,
+                .xml = acceptsXml,
+                .text = acceptsText,
+                .image = acceptsImage,
+            },
+            .note = "Responded with JSON because you accept it",
+        }, 200);
+    } else if (ctx.accepts("text/html")) {
+        ctx.html("<h1>Content Negotiation Test</h1><p>You prefer HTML!</p>", 200);
+    } else {
+        ctx.text("Content Negotiation Test - Plain text fallback", 200);
+    }
+}
+
+/// Test ctx.bytes() binary response
+/// GET /test/bytes
+fn handleTestBytes(ctx: *FetchContext) void {
+    // Create some binary data (PNG magic bytes + some data)
+    const data = [_]u8{
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG magic
+        0x00, 0x00, 0x00, 0x0D, // chunk length
+        0x49, 0x48, 0x44, 0x52, // IHDR
+    };
+
+    // Send as binary with custom content type
+    ctx.bytesWithType(&data, "application/octet-stream", 200);
+}
+
+/// Test ctx.file() download response
+/// GET /test/download
+fn handleTestDownload(ctx: *FetchContext) void {
+    // Create some sample file content
+    const content = "This is a sample text file for download testing.\nLine 2\nLine 3\n";
+
+    // Send as downloadable file
+    ctx.file(content, "sample.txt", "text/plain");
+}
+
+/// Test ctx.bodyFormData() helper
+/// POST /test/body-formdata
+fn handleTestBodyFormData(ctx: *FetchContext) void {
+    // Parse the request body as FormData using the new helper
+    var form = ctx.bodyFormData() orelse {
+        ctx.json(.{
+            .api = "ctx.bodyFormData() helper",
+            .success = false,
+            .err = "Could not parse FormData - make sure Content-Type is multipart/form-data",
+        }, 400);
+        return;
+    };
+    defer form.free();
+
+    // Check for fields
+    const hasUsername = form.has("username");
+    const hasEmail = form.has("email");
+
+    // Get field values
+    var usernameValue: []const u8 = "(not found)";
+    if (form.get("username")) |entry| {
+        switch (entry) {
+            .field => |value| usernameValue = value,
+            .file => |_| usernameValue = "(is a file)",
+        }
+    }
+
+    var emailValue: []const u8 = "(not found)";
+    if (form.get("email")) |entry| {
+        switch (entry) {
+            .field => |value| emailValue = value,
+            .file => |_| emailValue = "(is a file)",
+        }
+    }
+
+    ctx.json(.{
+        .api = "ctx.bodyFormData() helper",
+        .success = true,
+        .fields = .{
+            .hasUsername = hasUsername,
+            .hasEmail = hasEmail,
+            .username = usernameValue,
+            .email = emailValue,
         },
     }, 200);
 }

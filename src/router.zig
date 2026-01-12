@@ -176,6 +176,89 @@ const FetchContext = @import("worker/fetch.zig").FetchContext;
 /// and response methods.
 pub const HandlerFn = *const fn (ctx: *FetchContext) void;
 
+/// Middleware function type.
+///
+/// Middleware functions are called before or after route handlers.
+/// They receive the context and can modify it, send a response, or let
+/// processing continue.
+///
+/// Return `true` to continue processing, `false` to stop the chain.
+///
+/// ## Example
+///
+/// ```zig
+/// fn authMiddleware(ctx: *FetchContext) bool {
+///     const token = ctx.header("Authorization") orelse {
+///         ctx.json(.{ .err = "Unauthorized" }, 401);
+///         return false; // Stop processing
+///     };
+///     // Validate token...
+///     return true; // Continue to next middleware/handler
+/// }
+///
+/// fn logMiddleware(ctx: *FetchContext) bool {
+///     // Log request details (can't stop the chain)
+///     _ = ctx;
+///     return true;
+/// }
+/// ```
+pub const MiddlewareFn = *const fn (ctx: *FetchContext) bool;
+
+/// Maximum number of middleware functions per chain.
+pub const MAX_MIDDLEWARE = 8;
+
+/// Middleware chain for before/after hooks.
+///
+/// Use with `Route.dispatchWithMiddleware()` to add global middleware
+/// that runs before every route handler (e.g., auth, logging, CORS).
+///
+/// ## Example
+///
+/// ```zig
+/// const middleware = Middleware{
+///     .before = &.{ corsMiddleware, authMiddleware, logMiddleware },
+///     .after = &.{ responseLogger },
+/// };
+///
+/// export fn handleFetch(ctx_id: u32) void {
+///     const ctx = FetchContext.init(ctx_id) catch return;
+///     Route.dispatchWithMiddleware(routes, ctx, middleware);
+/// }
+/// ```
+pub const Middleware = struct {
+    /// Middleware to run before the route handler.
+    /// If any returns false, the chain stops and no handler runs.
+    before: []const MiddlewareFn = &.{},
+
+    /// Middleware to run after the route handler completes successfully.
+    /// Only runs if the handler didn't throw/return early.
+    after: []const MiddlewareFn = &.{},
+
+    /// Run all "before" middleware.
+    /// Returns true if all passed, false if any stopped the chain.
+    pub fn runBefore(self: *const Middleware, ctx: *FetchContext) bool {
+        for (self.before) |middleware| {
+            if (!middleware(ctx)) {
+                return false;
+            }
+            if (ctx.responded) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// Run all "after" middleware.
+    pub fn runAfter(self: *const Middleware, ctx: *FetchContext) void {
+        for (self.after) |middleware| {
+            _ = middleware(ctx);
+            if (ctx.responded) {
+                return;
+            }
+        }
+    }
+};
+
 /// A route definition with pattern matching support.
 ///
 /// Routes can be created using the static constructors (`get`, `post`, etc.)
@@ -505,6 +588,91 @@ pub const Route = struct {
                 ctx.params = params;
                 if (route.handler) |handler| {
                     handler(ctx);
+                    return;
+                }
+            }
+        }
+
+        // No match found - return 404
+        ctx.throw(404, "Not Found");
+    }
+
+    /// Dispatch a request with middleware support.
+    ///
+    /// Runs "before" middleware, then the route handler, then "after" middleware.
+    /// If any "before" middleware returns false, the chain stops.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// fn corsMiddleware(ctx: *FetchContext) bool {
+    ///     // Set CORS headers (would need low-level Response access)
+    ///     _ = ctx;
+    ///     return true;
+    /// }
+    ///
+    /// fn authMiddleware(ctx: *FetchContext) bool {
+    ///     const token = ctx.header("Authorization") orelse {
+    ///         ctx.json(.{ .err = "Unauthorized" }, 401);
+    ///         return false;
+    ///     };
+    ///     _ = token;
+    ///     return true;
+    /// }
+    ///
+    /// const middleware = Middleware{
+    ///     .before = &.{ corsMiddleware, authMiddleware },
+    /// };
+    ///
+    /// export fn handleFetch(ctx_id: u32) void {
+    ///     const ctx = FetchContext.init(ctx_id) catch return;
+    ///     Route.dispatchWithMiddleware(routes, ctx, middleware);
+    /// }
+    /// ```
+    pub fn dispatchWithMiddleware(routes: []const Route, ctx: *FetchContext, middleware: Middleware) void {
+        // Run "before" middleware
+        if (!middleware.runBefore(ctx)) {
+            return; // Middleware stopped the chain (or sent a response)
+        }
+
+        // Dispatch to route handler
+        const path = ctx.path;
+        const method = ctx.req.method();
+        dispatchInternalWithMiddleware(routes, ctx, path, method, middleware);
+    }
+
+    fn dispatchInternalWithMiddleware(routes: []const Route, ctx: *FetchContext, path: []const u8, method: Method, middleware: Middleware) void {
+        for (routes) |route| {
+            // Handle group routes with prefix
+            if (route.prefix) |prefix| {
+                if (std.mem.startsWith(u8, path, prefix)) {
+                    const sub_path = if (path.len > prefix.len) path[prefix.len..] else "/";
+                    const normalized_path = if (sub_path.len == 0 or sub_path[0] != '/') blk: {
+                        break :blk "/";
+                    } else sub_path;
+
+                    dispatchInternalWithMiddleware(route.children, ctx, normalized_path, method, middleware);
+                    if (ctx.responded) return;
+                }
+                continue;
+            }
+
+            // Check method if specified
+            if (route.method) |m| {
+                if (m != method) continue;
+            }
+
+            // Match path pattern
+            if (matchPath(route.pattern, path)) |params| {
+                ctx.params = params;
+                if (route.handler) |handler| {
+                    handler(ctx);
+
+                    // Run "after" middleware if handler didn't respond
+                    // (or even if it did, for logging purposes)
+                    if (!ctx.responded) {
+                        middleware.runAfter(ctx);
+                    }
                     return;
                 }
             }

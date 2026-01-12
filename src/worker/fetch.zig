@@ -61,6 +61,8 @@ const router = @import("../router.zig");
 const JsonBody = @import("json.zig").JsonBody;
 const URL = @import("../bindings/url.zig").URL;
 const URLSearchParams = @import("../bindings/url.zig").URLSearchParams;
+const FormData = @import("../bindings/formData.zig").FormData;
+const ReadableStream = @import("../bindings/streams/readable.zig").ReadableStream;
 
 /// Common HTTP errors that map to status codes.
 ///
@@ -374,6 +376,145 @@ pub const FetchContext = struct {
         return reqUrl.searchParams();
     }
 
+    /// Get a request header value by name.
+    ///
+    /// This is a convenience method that reads a single header from the request.
+    /// For multiple headers, use `ctx.req.headers()` directly.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // Get Authorization header
+    /// const auth = ctx.header("Authorization") orelse {
+    ///     ctx.json(.{ .err = "Unauthorized" }, 401);
+    ///     return;
+    /// };
+    ///
+    /// // Get Content-Type
+    /// const contentType = ctx.header("Content-Type") orelse "application/octet-stream";
+    /// ```
+    pub fn header(self: *FetchContext, name: []const u8) ?[]const u8 {
+        const headers = self.req.headers();
+        defer headers.free();
+        return headers.getText(name);
+    }
+
+    /// Parse the request body as FormData.
+    ///
+    /// Returns null if the body is missing, empty, or invalid FormData.
+    /// The returned `FormData` provides methods for accessing form fields and files.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// var form = ctx.bodyFormData() orelse {
+    ///     ctx.json(.{ .err = "Invalid form data" }, 400);
+    ///     return;
+    /// };
+    /// defer form.free();
+    ///
+    /// // Get a text field
+    /// if (form.get("username")) |entry| {
+    ///     switch (entry) {
+    ///         .field => |value| {
+    ///             // value is []const u8
+    ///         },
+    ///         .file => |file| {
+    ///             defer file.free();
+    ///             const filename = file.name();
+    ///             const content = file.text();
+    ///         },
+    ///     }
+    /// }
+    /// ```
+    pub fn bodyFormData(self: *FetchContext) ?FormData {
+        return self.req.formData();
+    }
+
+    /// Get the request body as a ReadableStream.
+    ///
+    /// This allows streaming the request body for large payloads or
+    /// when you want to process the body incrementally.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const stream = ctx.bodyStream();
+    /// defer stream.free();
+    ///
+    /// const reader = stream.getReader();
+    /// defer reader.free();
+    ///
+    /// var totalBytes: usize = 0;
+    /// while (true) {
+    ///     const result = reader.read();
+    ///     if (result.done) break;
+    ///     if (result.value) |chunk| {
+    ///         totalBytes += chunk.len;
+    ///     }
+    /// }
+    /// ```
+    pub fn bodyStream(self: *FetchContext) ReadableStream {
+        return self.req.body();
+    }
+
+    /// Check if the request accepts a given content type.
+    ///
+    /// Examines the Accept header to determine if the client accepts the specified
+    /// MIME type. Returns true if the Accept header is missing (accepts anything)
+    /// or if the specified type matches.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// if (ctx.accepts("application/json")) {
+    ///     ctx.json(.{ .data = "value" }, 200);
+    /// } else if (ctx.accepts("text/html")) {
+    ///     ctx.html("<p>value</p>", 200);
+    /// } else {
+    ///     ctx.text("value", 200);
+    /// }
+    /// ```
+    pub fn accepts(self: *FetchContext, contentType: []const u8) bool {
+        const acceptHeader = self.header("Accept") orelse return true; // No Accept header = accepts anything
+
+        // Check for exact match or wildcard
+        if (std.mem.indexOf(u8, acceptHeader, "*/*") != null) {
+            return true;
+        }
+
+        // Check for the specific content type
+        if (std.mem.indexOf(u8, acceptHeader, contentType) != null) {
+            return true;
+        }
+
+        // Check for type wildcard (e.g., "text/*" matches "text/html")
+        if (std.mem.indexOf(u8, contentType, "/")) |slashPos| {
+            const typePrefix = contentType[0..slashPos];
+            var searchBuf: [64]u8 = undefined;
+            const wildcardType = std.fmt.bufPrint(&searchBuf, "{s}/*", .{typePrefix}) catch return false;
+            if (std.mem.indexOf(u8, acceptHeader, wildcardType) != null) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// Get the HTTP method of the request.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const method = ctx.method();
+    /// if (method == .Post or method == .Put) {
+    ///     // handle body
+    /// }
+    /// ```
+    pub fn method(self: *FetchContext) Method {
+        return self.req.method();
+    }
+
     // ========================================================================
     // Response Helpers
     // ========================================================================
@@ -568,6 +709,113 @@ pub const FetchContext = struct {
         const res = Response.new(
             .{ .none = {} },
             .{ .status = 204, .statusText = "No Content" },
+        );
+        defer res.free();
+
+        self.send(&res);
+    }
+
+    /// Send a binary response with the given status code.
+    ///
+    /// Sets `Content-Type: application/octet-stream` by default.
+    /// Use `bytesWithType` to specify a different content type.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const data = [_]u8{ 0x89, 0x50, 0x4E, 0x47 }; // PNG magic bytes
+    /// ctx.bytes(&data, 200);
+    /// ```
+    pub fn bytes(self: *FetchContext, data: []const u8, status: u16) void {
+        self.bytesWithType(data, "application/octet-stream", status);
+    }
+
+    /// Send a binary response with a custom content type.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const imageData = getImageBytes();
+    /// ctx.bytesWithType(imageData, "image/png", 200);
+    /// ```
+    pub fn bytesWithType(self: *FetchContext, data: []const u8, contentType: []const u8, status: u16) void {
+        const statusText = @as(StatusCode, @enumFromInt(status)).toString();
+
+        const headers = Headers.new();
+        defer headers.free();
+        headers.setText("Content-Type", contentType);
+
+        // Use the .bytes variant which handles ArrayBuffer creation
+        const res = Response.new(
+            .{ .bytes = data },
+            .{ .status = status, .statusText = statusText, .headers = &headers },
+        );
+        defer res.free();
+
+        self.send(&res);
+    }
+
+    /// Send a file download response.
+    ///
+    /// Sets the Content-Disposition header to trigger a download with the
+    /// specified filename.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const fileData = readFile("report.pdf");
+    /// ctx.file(fileData, "report.pdf", "application/pdf");
+    /// ```
+    pub fn file(self: *FetchContext, data: []const u8, filename: []const u8, contentType: []const u8) void {
+        const statusText = @as(StatusCode, @enumFromInt(@as(u16, 200))).toString();
+
+        const headers = Headers.new();
+        defer headers.free();
+        headers.setText("Content-Type", contentType);
+
+        // Build Content-Disposition header
+        var dispositionBuf: [256]u8 = undefined;
+        const disposition = std.fmt.bufPrint(&dispositionBuf, "attachment; filename=\"{s}\"", .{filename}) catch "attachment";
+        headers.setText("Content-Disposition", disposition);
+
+        // Use the .bytes variant which handles ArrayBuffer creation
+        const res = Response.new(
+            .{ .bytes = data },
+            .{ .status = 200, .statusText = statusText, .headers = &headers },
+        );
+        defer res.free();
+
+        self.send(&res);
+    }
+
+    /// Send a streaming response.
+    ///
+    /// Pass a ReadableStream directly as the response body. Useful for
+    /// large responses or when transforming/piping data.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // Pipe through compression
+    /// const body = ctx.bodyStream();
+    /// defer body.free();
+    ///
+    /// const compression = workers.CompressionStream.new(.gzip);
+    /// defer compression.free();
+    ///
+    /// const compressed = body.pipeThrough(&compression.asTransform(), .{});
+    /// ctx.stream(&compressed, "application/gzip", 200);
+    /// ```
+    pub fn stream(self: *FetchContext, readable: *const ReadableStream, contentType: []const u8, status: u16) void {
+        const statusText = @as(StatusCode, @enumFromInt(status)).toString();
+
+        const headers = Headers.new();
+        defer headers.free();
+        headers.setText("Content-Type", contentType);
+
+        const res = Response.new(
+            .{ .stream = readable },
+            .{ .status = status, .statusText = statusText, .headers = &headers },
         );
         defer res.free();
 
