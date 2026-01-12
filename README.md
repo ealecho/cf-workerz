@@ -1536,10 +1536,10 @@ These features are complete and production-ready:
 
 These features work but are missing some functionality:
 
-| Feature | workers-rs | cf-workerz | What's Missing | Effort |
-|---------|-----------|------------|----------------|--------|
-| Headers | ✅ | ⚠️ | `keys()`, `values()`, `entries()` iterators | ~0.5 day |
-| Streams | ✅ | ⚠️ | Transform streams, piping utilities | ~1 day |
+| Feature | workers-rs | cf-workerz | What's Missing |
+|---------|-----------|------------|----------------|
+| Headers | ✅ | ⚠️ | `keys()`, `values()`, `entries()` iterators |
+| Streams | ✅ | ⚠️ | Transform streams, piping utilities |
 
 ---
 
@@ -1547,16 +1547,16 @@ These features work but are missing some functionality:
 
 These exist in the codebase but are **not functional** (only init/free methods):
 
-| Feature | workers-rs | cf-workerz | Priority | Effort | Notes |
-|---------|-----------|------------|----------|--------|-------|
-| **Durable Objects** | ✅ Full | ❌ Stub | 🔴 Critical | ~5-7 days | Major CF differentiator |
-| DO SQLite Storage | ✅ Full | ❌ Missing | 🔴 Critical | (with DO) | Depends on DO |
-| WebSocket | ✅ Full | ❌ Stub | 🟠 High | ~2-3 days | Real-time apps need this |
-| WebSocketPair | ✅ Full | ❌ Missing | 🟠 High | ~1 day | Server-side WebSocket |
-| FormData | ✅ Full | ❌ Stub | 🟡 Medium | ~1-2 days | File uploads, multipart |
-| URL | ✅ Full | ❌ Stub | 🟡 Medium | ~1 day | URL parsing/manipulation |
-| URLSearchParams | ✅ Full | ❌ Stub | 🟡 Medium | ~0.5 day | Query string handling |
-| SubtleCrypto | ✅ Full | ❌ Stub | 🟡 Medium | ~2-3 days | Encrypt, sign, hash, keys |
+| Feature | workers-rs | cf-workerz | Priority | Notes |
+|---------|-----------|------------|----------|-------|
+| **Durable Objects** | ✅ Full | ❌ Stub | 🔴 Critical | Major CF differentiator |
+| DO SQLite Storage | ✅ Full | ❌ Missing | 🔴 Critical | Depends on DO |
+| WebSocket | ✅ Full | ❌ Stub | 🟠 High | Real-time apps need this |
+| WebSocketPair | ✅ Full | ❌ Missing | 🟠 High | Server-side WebSocket |
+| FormData | ✅ Full | ❌ Stub | 🟡 Medium | File uploads, multipart |
+| URL | ✅ Full | ❌ Stub | 🟡 Medium | URL parsing/manipulation |
+| URLSearchParams | ✅ Full | ❌ Stub | 🟡 Medium | Query string handling |
+| SubtleCrypto | ✅ Full | ❌ Stub | 🟡 Medium | Encrypt, sign, hash, keys |
 
 ---
 
@@ -1564,17 +1564,17 @@ These exist in the codebase but are **not functional** (only init/free methods):
 
 These features exist in workers-rs but have no implementation in cf-workerz:
 
-| Feature | workers-rs | Priority | Effort | Notes |
-|---------|-----------|----------|--------|-------|
-| RPC Support | ✅ Experimental | 🟡 Medium | ~3-4 days | Worker-to-Worker RPC |
-| Hyperdrive | ✅ | 🟡 Medium | ~2-3 days | PostgreSQL connection pooling |
-| Vectorize | ✅ | 🟡 Medium | ~2-3 days | Vector database for AI apps |
-| Rate Limiting | ✅ | 🟢 Low | ~1-2 days | Built-in rate limiting API |
-| Analytics Engine | ✅ | 🟢 Low | ~1-2 days | Custom analytics/metrics |
-| Browser Rendering | ✅ | 🟢 Low | ~4-5 days | Puppeteer-like API |
-| Email Workers | ✅ | 🟢 Low | ~2-3 days | Inbound email handling |
-| mTLS | ✅ | 🟢 Low | ~1-2 days | Client certificates |
-| TCP Sockets | ✅ | 🟢 Low | ~3-4 days | Raw TCP connections |
+| Feature | workers-rs | Priority | Notes |
+|---------|-----------|----------|-------|
+| RPC Support | ✅ Experimental | 🟡 Medium | Worker-to-Worker RPC |
+| Hyperdrive | ✅ | 🟡 Medium | PostgreSQL connection pooling |
+| Vectorize | ✅ | 🟡 Medium | Vector database for AI apps |
+| Rate Limiting | ✅ | 🟢 Low | Built-in rate limiting API |
+| Analytics Engine | ✅ | 🟢 Low | Custom analytics/metrics |
+| Browser Rendering | ✅ | 🟢 Low | Puppeteer-like API |
+| Email Workers | ✅ | 🟢 Low | Inbound email handling |
+| mTLS | ✅ | 🟢 Low | Client certificates |
+| TCP Sockets | ✅ | 🟢 Low | Raw TCP connections |
 
 ---
 
