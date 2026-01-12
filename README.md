@@ -1585,14 +1585,14 @@ These features are complete and production-ready:
 
 ---
 
-### Partially Implemented (⚠️)
+### Recently Completed (formerly Partial ⚠️ → now ✅)
 
-These features work but are missing some functionality:
+These features are now fully implemented:
 
-| Feature | workers-rs | cf-workerz | What's Missing |
-|---------|-----------|------------|----------------|
-| Headers | ✅ | ⚠️ | `keys()`, `values()`, `entries()` iterators |
-| Streams | ✅ | ⚠️ | Transform streams, piping utilities |
+| Feature | workers-rs | cf-workerz | Status |
+|---------|-----------|------------|--------|
+| Headers | ✅ | ✅ | Full API including `keys()`, `values()`, `entries()` iterators |
+| Streams | ✅ | ✅ | ReadableStream, WritableStream, TransformStream, Compression/Decompression with piping |
 
 ---
 
@@ -1701,7 +1701,6 @@ We welcome contributions! These features have the highest impact:
 
 | Feature | Complexity | Good First Issue? |
 |---------|-----------|-------------------|
-| Headers iteration | Low | ✅ Yes |
 | SubtleCrypto | Medium | Maybe |
 | WebSocket | High | No |
 | Durable Objects | Very High | No |

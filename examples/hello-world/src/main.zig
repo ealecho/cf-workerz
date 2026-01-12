@@ -27,6 +27,7 @@
 //   GET  /test/params         - Test URLSearchParams
 //   POST /test/formdata       - Test FormData parsing
 //   GET  /test/query          - Test ctx.query() and ctx.url() helpers
+//   GET  /test/headers         - Test Headers iterator API
 
 const std = @import("std");
 const workers = @import("cf-workerz");
@@ -80,6 +81,7 @@ const routes: []const Route = &.{
     Route.get("/test/params", handleTestParams),
     Route.post("/test/formdata", handleTestFormData),
     Route.get("/test/query", handleTestQuery),
+    Route.get("/test/headers", handleTestHeaders),
 };
 
 // ============================================================================
@@ -471,6 +473,83 @@ fn handleTestQuery(ctx: *FetchContext) void {
             .pathname = pathname,
             .search = search,
             .hostname = host,
+        },
+    }, 200);
+}
+
+/// Test Headers iterator API
+/// GET /test/headers
+fn handleTestHeaders(ctx: *FetchContext) void {
+    // Get request headers
+    const headers = ctx.req.headers();
+    defer headers.free();
+
+    // Test keys() iterator - iterate over header names
+    var keysList = workers.Array.new();
+    defer keysList.free();
+
+    var keysIter = headers.keys();
+    defer keysIter.free();
+    var keyCount: u32 = 0;
+    while (keysIter.next()) |key| {
+        if (keyCount < 5) { // Limit to first 5 for demo
+            const keyStr = workers.String.new(key);
+            defer keyStr.free();
+            keysList.push(&keyStr);
+        }
+        keyCount += 1;
+    }
+
+    // Test values() iterator - iterate over header values
+    var valuesIter = headers.values();
+    defer valuesIter.free();
+    var valueCount: u32 = 0;
+    while (valuesIter.next()) |_| {
+        valueCount += 1;
+    }
+
+    // Test entries() iterator - iterate over name/value pairs
+    var entriesIter = headers.entries();
+    defer entriesIter.free();
+    var entryCount: u32 = 0;
+    var sampleHeader: ?[]const u8 = null;
+    var sampleValue: ?[]const u8 = null;
+    while (entriesIter.nextEntry()) |entry| {
+        if (entryCount == 0) {
+            sampleHeader = entry.name;
+            sampleValue = entry.value;
+        }
+        entryCount += 1;
+    }
+
+    // Test getText() convenience method
+    const contentType = headers.getText("content-type") orelse "(none)";
+    const userAgent = headers.getText("user-agent") orelse "(none)";
+    const host = headers.getText("host") orelse "(none)";
+
+    // Test has()
+    const hasAccept = headers.has("accept");
+    const hasCustom = headers.has("x-custom-header");
+
+    ctx.json(.{
+        .api = "Headers Iterator API",
+        .iterators = .{
+            .keyCount = keyCount,
+            .valueCount = valueCount,
+            .entryCount = entryCount,
+        },
+        .sample = .{
+            .firstHeaderName = sampleHeader orelse "(none)",
+            .firstHeaderValue = sampleValue orelse "(none)",
+        },
+        .getText = .{
+            .contentType = contentType,
+            .userAgent = userAgent,
+            .host = host,
+        },
+        .has = .{
+            .accept = hasAccept,
+            .customHeader = hasCustom,
         },
     }, 200);
 }

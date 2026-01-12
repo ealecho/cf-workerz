@@ -222,6 +222,214 @@ fn createUser(ctx: *FetchContext) void {
 }
 ```
 
+## Headers
+
+### Reading Headers
+
+```zig
+fn handleRequest(ctx: *FetchContext) void {
+    const headers = ctx.req.headers();
+    defer headers.free();
+    
+    // Get header value (returns ?[]const u8)
+    const contentType = headers.getText("content-type") orelse "text/plain";
+    const auth = headers.getText("authorization");
+    
+    // Check if header exists
+    if (headers.has("x-custom-header")) {
+        // header present
+    }
+    
+    ctx.json(.{ .contentType = contentType }, 200);
+}
+```
+
+### Iterating Headers
+
+```zig
+fn listHeaders(ctx: *FetchContext) void {
+    const headers = ctx.req.headers();
+    defer headers.free();
+    
+    // Iterate over header names
+    var keysIter = headers.keys();
+    defer keysIter.free();
+    while (keysIter.next()) |name| {
+        // name is []const u8: "content-type", "accept", etc.
+        _ = name;
+    }
+    
+    // Iterate over header values
+    var valuesIter = headers.values();
+    defer valuesIter.free();
+    while (valuesIter.next()) |value| {
+        // value is []const u8
+        _ = value;
+    }
+    
+    // Iterate over name/value pairs
+    var entriesIter = headers.entries();
+    defer entriesIter.free();
+    while (entriesIter.nextEntry()) |entry| {
+        // entry.name, entry.value are []const u8
+        _ = entry.name;
+        _ = entry.value;
+    }
+    
+    // Get iterator count
+    const count = keysIter.count();
+    _ = count;
+    
+    // Reset iterator to beginning
+    keysIter.reset();
+}
+```
+
+### Creating Headers
+
+```zig
+fn createHeaders() void {
+    const headers = workers.Headers.new();
+    defer headers.free();
+    
+    // Set headers
+    headers.setText("Content-Type", "application/json");
+    headers.setText("X-Custom", "value");
+    
+    // Append (allows multiple values for same key)
+    headers.append("Set-Cookie", "a=1");
+    headers.append("Set-Cookie", "b=2");
+    
+    // Delete
+    headers.delete("X-Custom");
+}
+```
+
+## Streams
+
+### ReadableStream
+
+```zig
+fn handleStreams(ctx: *FetchContext) void {
+    // Get body as stream
+    const body = ctx.req.body();
+    defer body.free();
+    
+    // Read as text
+    const text = body.text();
+    _ = text;
+    
+    // Read as bytes
+    const bytes = body.bytes();
+    _ = bytes;
+    
+    // Get a reader
+    const reader = body.getReader();
+    defer reader.free();
+    // reader.read(), reader.cancel(), etc.
+}
+```
+
+### Stream Piping
+
+```zig
+fn pipeStreams() void {
+    const readable = getReadableStream();
+    defer readable.free();
+    
+    const writable = getWritableStream();
+    defer writable.free();
+    
+    // Pipe to writable stream
+    readable.pipeTo(&writable, .{
+        .preventClose = false,
+        .preventAbort = false,
+        .preventCancel = false,
+    });
+}
+```
+
+### Compression/Decompression
+
+```zig
+fn compressResponse(ctx: *FetchContext) void {
+    const body = ctx.req.body();
+    defer body.free();
+    
+    // Compress with gzip
+    const compression = workers.CompressionStream.new(.gzip);
+    defer compression.free();
+    
+    const compressed = body.pipeThrough(&compression.asTransform(), .{});
+    defer compressed.free();
+    
+    // Read compressed data
+    const data = compressed.bytes();
+    _ = data;
+}
+
+fn decompressRequest() void {
+    const compressed = getCompressedStream();
+    defer compressed.free();
+    
+    // Decompress
+    const decompression = workers.DecompressionStream.new(.gzip);
+    defer decompression.free();
+    
+    const decompressed = compressed.pipeThrough(&decompression.asTransform(), .{});
+    defer decompressed.free();
+    
+    const text = decompressed.text();
+    _ = text;
+}
+```
+
+### Stream Teeing
+
+```zig
+fn teeStream() void {
+    const stream = getReadableStream();
+    defer stream.free();
+    
+    // Split into two independent streams
+    const branches = stream.tee();
+    defer branches[0].free();
+    defer branches[1].free();
+    
+    // Read from both independently
+    const text1 = branches[0].text();
+    const text2 = branches[1].text();
+    _ = text1;
+    _ = text2;
+}
+```
+
+### WritableStream Writer
+
+```zig
+fn writeToStream() void {
+    const writable = getWritableStream();
+    defer writable.free();
+    
+    // Get exclusive writer
+    const writer = writable.getWriter();
+    defer writer.free();
+    
+    // Write text
+    writer.write("Hello, ");
+    writer.write("World!");
+    
+    // Write bytes
+    writer.writeBytes(&[_]u8{ 0x48, 0x69 });
+    
+    // Close when done
+    writer.close();
+    
+    // Or abort on error
+    // writer.abort();
+}
+```
+
 ## D1 Database
 
 ### Ergonomic API (Recommended)
