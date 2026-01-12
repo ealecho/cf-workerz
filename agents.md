@@ -9,6 +9,11 @@
 - **Runtime**: Cloudflare Workers with JSPI
 - **Binary Size**: ~10-15KB WASM
 
+## Live Demo
+
+- **WebSocket Chat Client**: https://websocket-chat-client.pages.dev
+- **WebSocket Chat API**: https://websocket-chat.alaara.workers.dev
+
 ## Installation
 
 ```zig
@@ -1432,6 +1437,106 @@ fn handleAI(ctx: *FetchContext) void {
     ctx.throw(500, "AI failed");
 }
 ```
+
+## SubtleCrypto
+
+Full Web Crypto API for hashing, encryption, signing, and key management.
+
+### Convenience Hash Functions
+
+```zig
+const workers = @import("cf-workerz");
+
+fn hashExamples() void {
+    const data = "Hello, World!";
+    
+    // One-liner hash functions (return hex strings)
+    const sha256Hash = workers.sha256(data);   // 64 char hex
+    const sha1Hash = workers.sha1(data);       // 40 char hex
+    const sha512Hash = workers.sha512(data);   // 128 char hex
+    const md5Hash = workers.md5(data);         // 32 char hex
+    
+    _ = sha256Hash;
+    _ = sha1Hash;
+    _ = sha512Hash;
+    _ = md5Hash;
+}
+```
+
+### SubtleCrypto API
+
+```zig
+fn cryptoExamples(ctx: *FetchContext) void {
+    const subtle = workers.SubtleCrypto.get();
+    defer subtle.free();
+    
+    // Digest (hash)
+    const hash = subtle.digest(.@"SHA-256", "data to hash");
+    defer hash.free();
+    const hashBytes = hash.bytes();
+    _ = hashBytes;
+    
+    // Generate AES key
+    const aesKey = subtle.generateKey(.{
+        .AesKeyGenParams = .{ .name = .@"AES-GCM", .length = 256 },
+    }, true, &.{ .encrypt, .decrypt });
+    defer aesKey.free();
+    
+    // Generate HMAC key
+    const hmacKey = subtle.generateKey(.{
+        .HmacKeyGenParams = .{ .name = .HMAC, .hash = .@"SHA-256" },
+    }, true, &.{ .sign, .verify });
+    defer hmacKey.free();
+    
+    // Sign with HMAC
+    const signature = subtle.sign(.{ .HMAC = {} }, &hmacKey, "message");
+    defer signature.free();
+    
+    // Verify signature
+    const isValid = subtle.verify(.{ .HMAC = {} }, &hmacKey, &signature, "message");
+    _ = isValid;
+    
+    // Encrypt with AES-GCM
+    const iv = [_]u8{0} ** 12; // 12 bytes for GCM
+    const encrypted = subtle.encrypt(.{
+        .AesGcmParams = .{ .name = .@"AES-GCM", .iv = &iv },
+    }, &aesKey, "plaintext");
+    defer encrypted.free();
+    
+    // Decrypt
+    const decrypted = subtle.decrypt(.{
+        .AesGcmParams = .{ .name = .@"AES-GCM", .iv = &iv },
+    }, &aesKey, encrypted.bytes());
+    defer decrypted.free();
+    
+    // Export key to raw bytes
+    const exported = subtle.exportKey(.raw, &aesKey);
+    defer exported.free();
+    
+    // Import key from raw bytes
+    const imported = subtle.importKey(
+        .raw,
+        exported.bytes(),
+        .{ .AesKeyAlgorithm = .{ .name = .@"AES-GCM" } },
+        true,
+        &.{ .encrypt, .decrypt },
+    );
+    defer imported.free();
+    
+    ctx.json(.{ .success = true }, 200);
+}
+```
+
+### Supported Algorithms
+
+| Category | Algorithms |
+|----------|------------|
+| **Hash** | SHA-1, SHA-256, SHA-384, SHA-512, MD5 |
+| **HMAC** | HMAC with any hash algorithm |
+| **AES** | AES-GCM, AES-CBC, AES-CTR, AES-KW |
+| **RSA** | RSA-OAEP, RSASSA-PKCS1-v1_5, RSA-PSS |
+| **EC** | ECDSA, ECDH (P-256, P-384, P-521) |
+| **KDF** | PBKDF2, HKDF |
 
 ## Memory Management
 
