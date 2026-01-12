@@ -1481,10 +1481,10 @@ Verify your wrangler.toml has the correct bindings and the binding names match.
 
 cf-workerz aims for feature parity with [workers-rs](https://github.com/cloudflare/workers-rs), the official Rust SDK for Cloudflare Workers.
 
-> **Current Status: ~70-75% feature parity**
+> **Current Status: ~80% feature parity**
 >
 > Core APIs (KV, R2, D1, Cache, Queues, AI, Service Bindings) are fully implemented.
-> Major gaps: Durable Objects, WebSockets, FormData, URL utilities, SubtleCrypto.
+> Major gaps: Durable Objects, WebSockets, SubtleCrypto.
 
 ### Legend
 
@@ -1529,6 +1529,11 @@ These features are complete and production-ready:
 | crypto.randomUUID | ✅ | ✅ | Generate UUIDs |
 | crypto.getRandomValues | ✅ | ✅ | Cryptographic random bytes |
 | Execution Context | ✅ | ✅ | waitUntil, passThroughOnException |
+| **Web APIs** | | | |
+| URL | ✅ | ✅ | Parsing, properties, setters, searchParams |
+| URLSearchParams | ✅ | ✅ | Full CRUD, iteration, toString |
+| FormData | ✅ | ✅ | Get, set, append, delete, has, keys/values |
+| File | ✅ | ✅ | name, size, type, lastModified, text, bytes |
 
 ---
 
@@ -1553,9 +1558,6 @@ These exist in the codebase but are **not functional** (only init/free methods):
 | DO SQLite Storage | ✅ Full | ❌ Missing | 🔴 Critical | Depends on DO |
 | WebSocket | ✅ Full | ❌ Stub | 🟠 High | Real-time apps need this |
 | WebSocketPair | ✅ Full | ❌ Missing | 🟠 High | Server-side WebSocket |
-| FormData | ✅ Full | ❌ Stub | 🟡 Medium | File uploads, multipart |
-| URL | ✅ Full | ❌ Stub | 🟡 Medium | URL parsing/manipulation |
-| URLSearchParams | ✅ Full | ❌ Stub | 🟡 Medium | Query string handling |
 | SubtleCrypto | ✅ Full | ❌ Stub | 🟡 Medium | Encrypt, sign, hash, keys |
 
 ---
@@ -1604,7 +1606,7 @@ Features unique to cf-workerz (not available in workers-rs):
 | Learning Curve | Moderate (Rust) | Lower (Zig) |
 | Ecosystem | Large (crates.io) | Growing |
 | Axum/http compat | ✅ Yes | ➖ No (different ecosystem) |
-| Feature Parity | 100% (official) | ~70-75% |
+| Feature Parity | 100% (official) | ~80% |
 
 ---
 
@@ -1616,8 +1618,8 @@ Focus: Close the critical feature gaps
 
 - [ ] **Durable Objects** - Full implementation with state/storage
 - [ ] **WebSocket** - Client and server support, WebSocketPair
-- [ ] **FormData** - Parse multipart, file uploads
-- [ ] **URL/URLSearchParams** - Full URL manipulation API
+- [x] **FormData** - Parse multipart, file uploads ✅
+- [x] **URL/URLSearchParams** - Full URL manipulation API ✅
 - [ ] **SubtleCrypto** - Encrypt, decrypt, sign, verify, hash
 
 ### v0.3.0 - Extended APIs
@@ -1652,9 +1654,7 @@ We welcome contributions! These features have the highest impact:
 | Feature | Complexity | Good First Issue? |
 |---------|-----------|-------------------|
 | Headers iteration | Low | ✅ Yes |
-| URLSearchParams | Low | ✅ Yes |
-| URL | Medium | ✅ Yes |
-| FormData | Medium | Maybe |
+| SubtleCrypto | Medium | Maybe |
 | WebSocket | High | No |
 | Durable Objects | Very High | No |
 

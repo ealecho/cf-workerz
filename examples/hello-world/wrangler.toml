@@ -1,19 +1,67 @@
+# cf-workerz Worker Configuration
+# See: https://developers.cloudflare.com/workers/wrangler/configuration/
+
 name = "hello-world"
 main = "src/index.ts"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Build command - Zig compiles to WASM
 [build]
 command = "zig build"
 
+# WASM module handling - explicit to avoid default rule conflicts
 [[rules]]
 type = "CompiledWasm"
 globs = ["**/*.wasm"]
+fallthrough = false
 
-# D1 Database binding for ergonomic API demo
-# Run: npx wrangler d1 create hello-world-db
-# Then update the database_id below
+# ============================================================================
+# Bindings - Uncomment and configure as needed
+# ============================================================================
+
+# D1 Database
+# Run: npx wrangler d1 create <database-name>
 [[d1_databases]]
 binding = "DB"
 database_name = "hello-world-db"
 database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# KV Namespace
+# Run: npx wrangler kv namespace create <namespace-name>
+# [[kv_namespaces]]
+# binding = "KV"
+# id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# R2 Bucket
+# Run: npx wrangler r2 bucket create <bucket-name>
+# [[r2_buckets]]
+# binding = "BUCKET"
+# bucket_name = "my-bucket"
+
+# Queue Producer
+# [[queues.producers]]
+# binding = "QUEUE"
+# queue = "my-queue"
+
+# Queue Consumer
+# [[queues.consumers]]
+# queue = "my-queue"
+# max_batch_size = 10
+# max_batch_timeout = 5
+
+# Service Binding (Worker-to-Worker)
+# [[services]]
+# binding = "BACKEND"
+# service = "backend-worker"
+
+# Workers AI
+# [ai]
+# binding = "AI"
+
+# Environment Variables
+# [vars]
+# MY_VAR = "value"
+
+# Secrets (set via: npx wrangler secret put SECRET_NAME)
+# Access in Zig: ctx.env.secret("SECRET_NAME")

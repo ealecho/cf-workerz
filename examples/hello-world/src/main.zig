@@ -6,6 +6,8 @@
 // - JsonBody for parsing JSON request bodies
 // - ctx.json() with automatic struct serialization
 // - Response helpers (ctx.text, ctx.redirect, ctx.throw)
+// - URL and URLSearchParams APIs
+// - FormData API for form handling
 //
 // Endpoints:
 //   GET  /                    - Welcome message with API docs
@@ -19,6 +21,11 @@
 //   GET  /users/:id           - Get single user (ergonomic one)
 //   POST /users               - Create user (JsonBody + execute)
 //   DELETE /users/:id         - Delete user (execute)
+//
+// Test Endpoints (URL/FormData APIs):
+//   GET  /test/url            - Test URL parsing and manipulation
+//   GET  /test/params         - Test URLSearchParams
+//   POST /test/formdata       - Test FormData parsing
 
 const std = @import("std");
 const workers = @import("cf-workerz");
@@ -66,6 +73,11 @@ const routes: []const Route = &.{
     Route.get("/users/:id", handleGetUser),
     Route.post("/users", handleCreateUser),
     Route.delete("/users/:id", handleDeleteUser),
+
+    // Test routes for URL and FormData APIs
+    Route.get("/test/url", handleTestUrl),
+    Route.get("/test/params", handleTestParams),
+    Route.post("/test/formdata", handleTestFormData),
 };
 
 // ============================================================================
@@ -278,6 +290,141 @@ fn handleDeleteUser(ctx: *FetchContext) void {
     } else {
         ctx.json(.{ .err = "User not found" }, 404);
     }
+}
+
+// ============================================================================
+// URL and FormData Test Handlers
+// ============================================================================
+
+/// Test URL parsing and manipulation
+/// GET /test/url?example=value
+fn handleTestUrl(ctx: *FetchContext) void {
+    // Parse a complex URL
+    const url = workers.URL.new("https://user:pass@example.com:8080/path/to/resource?foo=bar&baz=qux#section");
+    defer url.free();
+
+    // Test all property getters
+    ctx.json(.{
+        .api = "URL",
+        .href = url.href(),
+        .protocol = url.protocol(),
+        .username = url.username(),
+        .password = url.password(),
+        .host = url.host(),
+        .hostname = url.hostname(),
+        .port = url.port(),
+        .pathname = url.pathname(),
+        .search = url.search(),
+        .hash = url.hash(),
+        .origin = url.origin(),
+    }, 200);
+}
+
+/// Test URLSearchParams
+/// GET /test/params?name=Alice&tags=zig&tags=wasm
+fn handleTestParams(ctx: *FetchContext) void {
+    // Create URLSearchParams and manipulate it
+    const params = workers.URLSearchParams.new();
+    defer params.free();
+
+    // Test append
+    params.append("name", "Alice");
+    params.append("age", "30");
+    params.append("tags", "zig");
+    params.append("tags", "wasm"); // Multiple values for same key
+
+    // Test has
+    const hasName = params.has("name");
+    const hasEmail = params.has("email");
+
+    // Test get
+    const name = params.get("name") orelse "(null)";
+    const missing = params.get("missing") orelse "(null)";
+
+    // Test set (replaces existing)
+    params.set("age", "31");
+    const newAge = params.get("age") orelse "(null)";
+
+    // Test size
+    const size = params.size();
+
+    // Test toString
+    const queryString = params.toString();
+
+    // Test delete
+    params.delete("tags");
+    const afterDelete = params.toString();
+
+    ctx.json(.{
+        .api = "URLSearchParams",
+        .hasName = hasName,
+        .hasEmail = hasEmail,
+        .name = name,
+        .missing = missing,
+        .ageAfterSet = newAge,
+        .size = size,
+        .queryString = queryString,
+        .afterDeleteTags = afterDelete,
+    }, 200);
+}
+
+/// Test FormData parsing
+/// POST /test/formdata with Content-Type: application/x-www-form-urlencoded
+/// or multipart/form-data
+fn handleTestFormData(ctx: *FetchContext) void {
+    // Create FormData and test it
+    const form = workers.FormData.new();
+    defer form.free();
+
+    // Test append
+    form.append("username", "alice");
+    form.append("email", "alice@example.com");
+    form.append("roles", "admin");
+    form.append("roles", "user"); // Multiple values
+
+    // Test has
+    const hasUsername = form.has("username");
+    const hasPassword = form.has("password");
+
+    // Test get
+    var usernameValue: []const u8 = "(null)";
+    if (form.get("username")) |entry| {
+        switch (entry) {
+            .field => |value| {
+                usernameValue = value;
+            },
+            .file => |_| {
+                usernameValue = "(file)";
+            },
+        }
+    }
+
+    // Test set (replaces existing)
+    form.set("email", "bob@example.com");
+    var emailAfterSet: []const u8 = "(null)";
+    if (form.get("email")) |entry| {
+        switch (entry) {
+            .field => |value| {
+                emailAfterSet = value;
+            },
+            .file => |_| {
+                emailAfterSet = "(file)";
+            },
+        }
+    }
+
+    // Test delete
+    form.delete("roles");
+    const hasRolesAfterDelete = form.has("roles");
+
+    ctx.json(.{
+        .api = "FormData",
+        .hasUsername = hasUsername,
+        .hasPassword = hasPassword,
+        .username = usernameValue,
+        .emailAfterSet = emailAfterSet,
+        .hasRolesAfterDelete = hasRolesAfterDelete,
+    }, 200);
 }
 
 // ============================================================================
