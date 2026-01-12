@@ -1,0 +1,14 @@
+{
+  "name": "durable-objects",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "zig build",
+    "dev": "npx wrangler@latest dev --port 8789",
+    "deploy": "npx wrangler@latest deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "typescript": "^5.6.3"
+  }
+}

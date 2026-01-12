@@ -1,0 +1,27 @@
+# cf-workerz Durable Objects Example
+# Demonstrates location hints, alarms, and SQL storage
+
+name = "durable-objects"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Build command - Zig compiles to WASM
+[build]
+command = "zig build"
+
+# WASM module handling
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = false
+
+# Durable Objects binding
+[[durable_objects.bindings]]
+name = "COUNTER"
+class_name = "Counter"
+
+# Durable Object migration
+[[migrations]]
+tag = "v1"
+new_classes = ["Counter"]
