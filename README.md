@@ -6,7 +6,9 @@ A Zig library for building Cloudflare Workers with WebAssembly. Write high-perfo
 
 - **Cloudflare APIs**: KV, R2, D1, Cache, Queues, Service Bindings, Workers AI
 - **Ergonomic D1**: pg.zig-inspired query API with inline params and struct mapping
-- **Built-in Router**: Path parameters, wildcards, route groups, response helpers
+- **Built-in Router**: Path parameters, wildcards, route groups, middleware support
+- **Response Helpers**: JSON, text, HTML, redirect, binary, file downloads, streaming
+- **Request Helpers**: Headers, content negotiation, FormData, body streaming
 - **JSPI Async**: Zero-overhead JavaScript Promise Integration (no Asyncify)
 - **Tiny Binaries**: WASM output typically 10-15KB
 - **Type Safe**: Full Zig type safety with compile-time route checking
@@ -598,6 +600,67 @@ export fn handleFetch(ctx_id: u32) void {
 }
 ```
 
+### Middleware
+
+cf-workerz supports before/after middleware hooks for cross-cutting concerns like CORS, authentication, and logging.
+
+```zig
+const workers = @import("cf-workerz");
+const FetchContext = workers.FetchContext;
+const Route = workers.Router;
+const Middleware = workers.Middleware;
+
+// CORS middleware - handles preflight and adds headers
+fn corsMiddleware(ctx: *FetchContext) bool {
+    if (ctx.method() == .Options) {
+        const headers = workers.Headers.new();
+        defer headers.free();
+        headers.setText("Access-Control-Allow-Origin", "*");
+        headers.setText("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        headers.setText("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        headers.setText("Access-Control-Max-Age", "86400");
+
+        const res = workers.Response.new(
+            .{ .none = {} },
+            .{ .status = 204, .statusText = "No Content", .headers = &headers },
+        );
+        defer res.free();
+        ctx.send(&res);
+        return false; // Stop chain, request handled
+    }
+    return true; // Continue to next middleware/handler
+}
+
+// Auth middleware
+fn authMiddleware(ctx: *FetchContext) bool {
+    const token = ctx.header("Authorization") orelse {
+        ctx.json(.{ .err = "Unauthorized" }, 401);
+        return false; // Stop the chain
+    };
+    // Validate token...
+    _ = token;
+    return true;
+}
+
+// Create middleware chain
+const middleware = Middleware{
+    .before = &.{ corsMiddleware, authMiddleware },
+    .after = &.{}, // Optional after-handlers
+};
+
+// Dispatch with middleware
+export fn handleFetch(ctx_id: u32) void {
+    const ctx = FetchContext.init(ctx_id) catch return;
+    Route.dispatchWithMiddleware(routes, ctx, middleware);
+}
+```
+
+**Middleware Return Values:**
+- `return true` - Continue to next middleware or route handler
+- `return false` - Stop the chain (must send response before returning)
+
+**Note:** `ctx.json()` does NOT add CORS headers automatically. Use middleware for CORS.
+
 ### Route Methods
 
 | Method | Description |
@@ -722,8 +785,112 @@ fn handleExample(ctx: *FetchContext) void {
     ctx.redirect("/new-path", 302);
     ctx.noContent();  // 204
     ctx.throw(500, "Internal error");
+    
+    // Binary data
+    const data = [_]u8{ 0x89, 0x50, 0x4E, 0x47 }; // PNG magic
+    ctx.bytes(&data, 200); // application/octet-stream
+    ctx.bytesWithType(&data, "image/png", 200);
+    
+    // File download (sets Content-Disposition header)
+    ctx.file(fileData, "report.pdf", "application/pdf");
+    
+    // Streaming response
+    const stream = getReadableStream();
+    ctx.stream(&stream, "application/octet-stream", 200);
 }
 ```
+
+**Response Helper Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `ctx.json(value, status)` | JSON with auto-serialization (structs, strings, errors) |
+| `ctx.text(text, status)` | Plain text response |
+| `ctx.html(html, status)` | HTML response |
+| `ctx.redirect(url, status)` | Redirect response (301, 302, etc.) |
+| `ctx.noContent()` | 204 No Content |
+| `ctx.throw(status, message)` | Error response |
+| `ctx.bytes(data, status)` | Binary data (application/octet-stream) |
+| `ctx.bytesWithType(data, contentType, status)` | Binary with custom content type |
+| `ctx.file(data, filename, contentType)` | File download with Content-Disposition |
+| `ctx.stream(readable, contentType, status)` | Streaming response |
+
+### Request Helpers
+
+Access request data with convenient helper methods:
+
+```zig
+fn handleRequest(ctx: *FetchContext) void {
+    // Get a single header value (shorthand)
+    const auth = ctx.header("Authorization") orelse {
+        ctx.json(.{ .err = "Unauthorized" }, 401);
+        return;
+    };
+    
+    // Get HTTP method
+    const method = ctx.method();
+    if (method == .Post or method == .Put) {
+        // handle body
+    }
+    
+    // Content negotiation - check what client accepts
+    if (ctx.accepts("application/json")) {
+        ctx.json(.{ .data = "value" }, 200);
+    } else if (ctx.accepts("text/html")) {
+        ctx.html("<p>value</p>", 200);
+    } else {
+        ctx.text("value", 200);
+    }
+    
+    // Parse FormData body (multipart/form-data)
+    var form = ctx.bodyFormData() orelse {
+        ctx.throw(400, "Invalid form data");
+        return;
+    };
+    defer form.free();
+    
+    if (form.get("file")) |entry| {
+        switch (entry) {
+            .field => |value| { _ = value; },
+            .file => |file| {
+                defer file.free();
+                const filename = file.name();
+                const content = file.bytes();
+                // Process uploaded file
+            },
+        }
+    }
+    
+    // Get body as stream for large payloads
+    const stream = ctx.bodyStream();
+    defer stream.free();
+    
+    const reader = stream.getReader();
+    defer reader.free();
+    
+    while (true) {
+        const result = reader.read();
+        if (result.done) break;
+        if (result.value) |chunk| {
+            // Process chunk
+        }
+    }
+}
+```
+
+**Request Helper Methods:**
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `ctx.header(name)` | `?[]const u8` | Get single header value |
+| `ctx.method()` | `Method` | HTTP method (.Get, .Post, etc.) |
+| `ctx.accepts(contentType)` | `bool` | Check Accept header for content type |
+| `ctx.bodyJson()` | `?JsonBody` | Parse body as JSON |
+| `ctx.bodyFormData()` | `?FormData` | Parse body as FormData |
+| `ctx.bodyStream()` | `ReadableStream` | Get body as stream |
+| `ctx.query()` | `URLSearchParams` | Get query parameters |
+| `ctx.url()` | `URL` | Get parsed URL |
+| `ctx.param(name)` | `?[]const u8` | Get path parameter |
 
 ---
 
@@ -1501,6 +1668,50 @@ cf-workerz uses JSPI for async operations. JSPI is a WebAssembly standard (Phase
 
 ---
 
+## Security Considerations
+
+### CORS
+
+`ctx.json()` does **not** add CORS headers automatically. You must use middleware to handle CORS:
+
+```zig
+fn corsMiddleware(ctx: *FetchContext) bool {
+    if (ctx.method() == .Options) {
+        const headers = workers.Headers.new();
+        defer headers.free();
+        headers.setText("Access-Control-Allow-Origin", "*");
+        headers.setText("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        headers.setText("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        
+        const res = workers.Response.new(
+            .{ .none = {} },
+            .{ .status = 204, .statusText = "No Content", .headers = &headers },
+        );
+        defer res.free();
+        ctx.send(&res);
+        return false;
+    }
+    return true;
+}
+```
+
+### File Downloads
+
+Filenames passed to `ctx.file()` are automatically sanitized to prevent HTTP header injection. The following characters are replaced with underscores:
+- Quotes (`"`)
+- Backslashes (`\`)
+- Carriage returns and newlines (`\r`, `\n`)
+- Control characters (< 32) and DEL (127)
+
+### JSON Response Size
+
+JSON responses use a tiered buffer strategy:
+- **Stack buffer**: 4KB (fast path for small responses)
+- **Heap fallback**: Up to 1MB for larger responses
+- Responses exceeding 1MB return a 500 error
+
+---
+
 ## Troubleshooting
 
 ### "handleFetch not exported"
@@ -1668,6 +1879,8 @@ Focus: Close the critical feature gaps
 - [ ] **WebSocket** - Client and server support, WebSocketPair
 - [x] **FormData** - Parse multipart, file uploads ✅
 - [x] **URL/URLSearchParams** - Full URL manipulation API ✅
+- [x] **Middleware** - Before/after hooks for router ✅
+- [x] **Headers Iteration** - keys(), values(), entries() iterators ✅
 - [ ] **SubtleCrypto** - Encrypt, decrypt, sign, verify, hash
 
 ### v0.3.0 - Extended APIs
@@ -1675,14 +1888,12 @@ Focus: Close the critical feature gaps
 - [ ] Hyperdrive support (PostgreSQL connection pooling)
 - [ ] Vectorize support (Vector database)
 - [ ] RPC support (Worker-to-Worker RPC)
-- [ ] Headers iteration methods
 
 ### v0.4.0 - Advanced Features
 
 - [ ] Browser Rendering API
 - [ ] Rate Limiting API
 - [ ] Email Workers support
-- [ ] Middleware system for router
 
 ### v1.0.0 (Stable)
 
