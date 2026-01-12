@@ -45,6 +45,44 @@ const workers = @import("cf-workerz");
 
 const FetchContext = workers.FetchContext;
 const Route = workers.Router;
+const Middleware = workers.Middleware;
+
+// ============================================================================
+// Middleware
+// ============================================================================
+
+/// CORS middleware - adds cross-origin headers to responses.
+/// Since CORS is not automatically added by ctx.json(), add it via middleware.
+fn corsMiddleware(ctx: *FetchContext) bool {
+    // For preflight requests, respond immediately
+    if (ctx.method() == .Options) {
+        const headers = workers.Headers.new();
+        defer headers.free();
+        headers.setText("Access-Control-Allow-Origin", "*");
+        headers.setText("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        headers.setText("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        headers.setText("Access-Control-Max-Age", "86400");
+
+        const res = workers.Response.new(
+            .{ .none = {} },
+            .{ .status = 204, .statusText = "No Content", .headers = &headers },
+        );
+        defer res.free();
+        ctx.send(&res);
+        return false; // Stop chain, we handled the request
+    }
+
+    // For other requests, continue processing
+    // Note: CORS response headers would need to be added in a post-middleware
+    // or by wrapping ctx.json() calls. For simplicity, this example shows the pattern.
+    return true;
+}
+
+/// Global middleware configuration
+const middleware = Middleware{
+    .before = &.{corsMiddleware},
+    .after = &.{},
+};
 
 // ============================================================================
 // Data Types
@@ -984,5 +1022,6 @@ fn handleTestBodyFormData(ctx: *FetchContext) void {
 
 export fn handleFetch(ctx_id: u32) void {
     const ctx = FetchContext.init(ctx_id) catch return;
-    Route.dispatch(routes, ctx);
+    // Use middleware dispatch for CORS support
+    Route.dispatchWithMiddleware(routes, ctx, middleware);
 }

@@ -257,9 +257,27 @@ const Middleware = workers.Middleware;
 const MiddlewareFn = workers.MiddlewareFn;
 
 // Define middleware functions
+
+/// CORS middleware - handles preflight requests and adds CORS headers.
+/// Note: ctx.json() does NOT add CORS headers automatically.
 fn corsMiddleware(ctx: *FetchContext) bool {
-    // Would set CORS headers here
-    _ = ctx;
+    // Handle preflight OPTIONS requests
+    if (ctx.method() == .Options) {
+        const headers = workers.Headers.new();
+        defer headers.free();
+        headers.setText("Access-Control-Allow-Origin", "*");
+        headers.setText("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        headers.setText("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        headers.setText("Access-Control-Max-Age", "86400");
+
+        const res = workers.Response.new(
+            .{ .none = {} },
+            .{ .status = 204, .statusText = "No Content", .headers = &headers },
+        );
+        defer res.free();
+        ctx.send(&res);
+        return false; // Stop chain, request handled
+    }
     return true; // Continue to next middleware/handler
 }
 

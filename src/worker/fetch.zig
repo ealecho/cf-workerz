@@ -43,6 +43,14 @@
 //! | `throw(status, message)` | Error response |
 
 const std = @import("std");
+
+/// Maximum size for stack-allocated JSON responses.
+/// Responses larger than this will use heap allocation.
+pub const JSON_STACK_BUFFER_SIZE = 4096;
+
+/// Maximum size for heap-allocated JSON responses (1MB).
+/// Responses larger than this will fail with a 500 error.
+pub const JSON_MAX_HEAP_SIZE = 1024 * 1024;
 const allocator = std.heap.page_allocator;
 const common = @import("../bindings/common.zig");
 const jsFree = common.jsFree;
@@ -546,13 +554,19 @@ pub const FetchContext = struct {
     /// // Array
     /// ctx.json(.{ .items = users }, 200);
     /// ```
+    ///
+    /// **Note**: For CORS support, add CORS headers via middleware.
     pub fn json(self: *FetchContext, value: anytype, status: u16) void {
         const T = @TypeOf(value);
         const type_info = @typeInfo(T);
         const statusText = @as(StatusCode, @enumFromInt(status)).toString();
 
         // Determine the JSON body bytes
-        var buf: [4096]u8 = undefined;
+        // Try stack buffer first, fall back to heap for large payloads
+        var stack_buf: [JSON_STACK_BUFFER_SIZE]u8 = undefined;
+        var heap_buf: ?[]u8 = null;
+        defer if (heap_buf) |hb| allocator.free(hb);
+
         const json_bytes: []const u8 = blk: {
             // Handle raw string slices ([]const u8, []u8) - treat as raw JSON
             if (comptime isStringType(T)) {
@@ -567,21 +581,35 @@ pub const FetchContext = struct {
             // Handle error types -> {"error": "ErrorName"}
             if (type_info == .error_set) {
                 const error_name = @errorName(value);
-                var writer: std.Io.Writer = .fixed(&buf);
+                var writer: std.Io.Writer = .fixed(&stack_buf);
                 std.json.Stringify.value(.{ .@"error" = error_name }, .{}, &writer) catch {
                     self.throw(500, "JSON serialization failed");
                     return;
                 };
-                break :blk buf[0..writer.end];
+                break :blk stack_buf[0..writer.end];
             }
 
             // Handle everything else (structs, arrays, etc.) -> JSON serialize
-            var writer: std.Io.Writer = .fixed(&buf);
-            std.json.Stringify.value(value, .{}, &writer) catch {
+            // First try stack buffer
+            var writer: std.Io.Writer = .fixed(&stack_buf);
+            std.json.Stringify.value(value, .{}, &writer) catch |err| {
+                if (err == error.NoSpaceLeft) {
+                    // Stack buffer too small, try heap allocation
+                    heap_buf = allocator.alloc(u8, JSON_MAX_HEAP_SIZE) catch {
+                        self.throw(500, "Out of memory for JSON response");
+                        return;
+                    };
+                    var heap_writer: std.Io.Writer = .fixed(heap_buf.?);
+                    std.json.Stringify.value(value, .{}, &heap_writer) catch {
+                        self.throw(500, "JSON response too large (max 1MB)");
+                        return;
+                    };
+                    break :blk heap_buf.?[0..heap_writer.end];
+                }
                 self.throw(500, "JSON serialization failed");
                 return;
             };
-            break :blk buf[0..writer.end];
+            break :blk stack_buf[0..writer.end];
         };
 
         const body_str = String.new(json_bytes);
@@ -590,7 +618,6 @@ pub const FetchContext = struct {
         const headers = Headers.new();
         defer headers.free();
         headers.setText("Content-Type", "application/json");
-        headers.setText("Access-Control-Allow-Origin", "*");
 
         const res = Response.new(
             .{ .string = &body_str },
@@ -758,7 +785,7 @@ pub const FetchContext = struct {
     /// Send a file download response.
     ///
     /// Sets the Content-Disposition header to trigger a download with the
-    /// specified filename.
+    /// specified filename. The filename is sanitized to prevent header injection.
     ///
     /// ## Example
     ///
@@ -773,9 +800,30 @@ pub const FetchContext = struct {
         defer headers.free();
         headers.setText("Content-Type", contentType);
 
-        // Build Content-Disposition header
-        var dispositionBuf: [256]u8 = undefined;
-        const disposition = std.fmt.bufPrint(&dispositionBuf, "attachment; filename=\"{s}\"", .{filename}) catch "attachment";
+        // Sanitize filename to prevent header injection (RFC 6266)
+        // Remove or replace dangerous characters: ", \, \r, \n, control chars
+        var sanitizedFilename: [256]u8 = undefined;
+        var sanitizedLen: usize = 0;
+        for (filename) |c| {
+            // Skip control characters, quotes, backslashes, and newlines
+            if (c < 32 or c == '"' or c == '\\' or c == '\r' or c == '\n' or c == 127) {
+                // Replace with underscore for visibility
+                if (sanitizedLen < sanitizedFilename.len) {
+                    sanitizedFilename[sanitizedLen] = '_';
+                    sanitizedLen += 1;
+                }
+            } else {
+                if (sanitizedLen < sanitizedFilename.len) {
+                    sanitizedFilename[sanitizedLen] = c;
+                    sanitizedLen += 1;
+                }
+            }
+        }
+
+        // Build Content-Disposition header with sanitized filename
+        var dispositionBuf: [512]u8 = undefined;
+        const safeName = sanitizedFilename[0..sanitizedLen];
+        const disposition = std.fmt.bufPrint(&dispositionBuf, "attachment; filename=\"{s}\"", .{safeName}) catch "attachment";
         headers.setText("Content-Disposition", disposition);
 
         // Use the .bytes variant which handles ArrayBuffer creation
