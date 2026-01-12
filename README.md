@@ -2341,7 +2341,7 @@ cf-workerz aims for feature parity with [workers-rs](https://github.com/cloudfla
 
 > **Current Status: ~95% feature parity**
 >
-> All core Cloudflare APIs are fully implemented including KV, R2, D1, Cache, Queues, AI, Service Bindings, **Durable Objects**, **WebSockets**, and **SubtleCrypto**.
+> All core Cloudflare APIs are fully implemented including KV, R2, D1, Cache, Queues, AI, Service Bindings, **Durable Objects**, **WebSockets**, **SubtleCrypto**, and **Rate Limiting**.
 > Remaining gaps: Hyperdrive, Vectorize, RPC.
 
 ### Legend
@@ -2394,6 +2394,8 @@ These features are complete and production-ready:
 | URLSearchParams | ✅ | ✅ | Full CRUD, iteration, toString |
 | FormData | ✅ | ✅ | Get, set, append, delete, has, keys/values |
 | File | ✅ | ✅ | name, size, type, lastModified, text, bytes |
+| **Rate Limiting** | | | |
+| Rate Limiter | ✅ | ✅ | limit() with per-location enforcement |
 
 ---
 
@@ -2406,7 +2408,6 @@ These features exist in workers-rs but have no implementation in cf-workerz:
 | RPC Support | ✅ Experimental | 🟡 Medium | Worker-to-Worker RPC |
 | Hyperdrive | ✅ | 🟡 Medium | PostgreSQL connection pooling |
 | Vectorize | ✅ | 🟡 Medium | Vector database for AI apps |
-| Rate Limiting | ✅ | 🟢 Low | Built-in rate limiting API |
 | Analytics Engine | ✅ | 🟢 Low | Custom analytics/metrics |
 | Browser Rendering | ✅ | 🟢 Low | Puppeteer-like API |
 | Email Workers | ✅ | 🟢 Low | Inbound email handling |
@@ -2476,8 +2477,8 @@ Focus: Close the critical feature gaps
 
 ### v0.4.0 - Advanced Features
 
+- [x] Rate Limiting API ✅
 - [ ] Browser Rendering API
-- [ ] Rate Limiting API
 - [ ] Email Workers support
 
 ### v1.0.0 (Stable)
