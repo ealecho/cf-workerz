@@ -16,3 +16,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Wrangler
+.wrangler/
+.dev.vars

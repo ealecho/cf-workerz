@@ -10,7 +10,7 @@
  */
 
 import wasmModule from '../zig-out/bin/worker.wasm';
-import { createClerkClient, verifyToken } from '@clerk/backend';
+import { verifyToken } from '@clerk/backend';
 
 // ============================================================================
 // Type Definitions
@@ -153,6 +153,7 @@ async function verifyClerkToken(
 
   try {
     // Option 1: Use verifyToken for networkless verification (requires CLERK_JWT_KEY)
+    // This is the fastest option as it doesn't make network requests
     if (env.CLERK_JWT_KEY) {
       const payload = await verifyToken(token, {
         jwtKey: env.CLERK_JWT_KEY,
@@ -168,28 +169,20 @@ async function verifyClerkToken(
       };
     }
 
-    // Option 2: Use Clerk client with secret key (makes network request to JWKS)
+    // Option 2: Use verifyToken with secretKey (fetches JWKS from Clerk)
+    // This works with just the secret key - no publishable key needed
     if (env.CLERK_SECRET_KEY) {
-      const clerkClient = createClerkClient({
+      const payload = await verifyToken(token, {
         secretKey: env.CLERK_SECRET_KEY,
-        publishableKey: env.CLERK_PUBLISHABLE_KEY,
-      });
-
-      const { isSignedIn, toAuth } = await clerkClient.authenticateRequest(request, {
         authorizedParties: undefined, // Add your allowed origins here
       });
 
-      if (!isSignedIn) {
-        return null;
-      }
-
-      const auth = toAuth();
       return {
-        userId: auth.userId,
-        sessionId: auth.sessionId,
-        orgId: auth.orgId ?? undefined,
-        orgRole: auth.orgRole ?? undefined,
-        orgSlug: auth.orgSlug ?? undefined,
+        userId: payload.sub,
+        sessionId: payload.sid,
+        orgId: payload.org_id,
+        orgRole: payload.org_role,
+        orgSlug: payload.org_slug,
       };
     }
 
