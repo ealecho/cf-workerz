@@ -28,6 +28,7 @@
 //   POST /test/formdata       - Test FormData parsing
 //   GET  /test/query          - Test ctx.query() and ctx.url() helpers
 //   GET  /test/headers         - Test Headers iterator API
+//   POST /test/streams         - Test Streams API (body reading)
 
 const std = @import("std");
 const workers = @import("cf-workerz");
@@ -82,6 +83,7 @@ const routes: []const Route = &.{
     Route.post("/test/formdata", handleTestFormData),
     Route.get("/test/query", handleTestQuery),
     Route.get("/test/headers", handleTestHeaders),
+    Route.post("/test/streams", handleTestStreams),
 };
 
 // ============================================================================
@@ -550,6 +552,68 @@ fn handleTestHeaders(ctx: *FetchContext) void {
         .has = .{
             .accept = hasAccept,
             .customHeader = hasCustom,
+        },
+    }, 200);
+}
+
+/// Test Streams API
+/// POST /test/streams with a body
+fn handleTestStreams(ctx: *FetchContext) void {
+    // Read request body using existing Request methods
+    const bodyText = ctx.req.text() orelse "(empty)";
+    defer std.heap.page_allocator.free(bodyText);
+
+    // Test CompressionStream creation with different formats
+    const gzipCompression = workers.CompressionStream.new(.gzip);
+    defer gzipCompression.free();
+
+    const deflateCompression = workers.CompressionStream.new(.deflate);
+    defer deflateCompression.free();
+
+    // Get the transform from compression stream
+    const compressTransform = gzipCompression.asTransform();
+    // Note: We don't free compressTransform since it shares the same ID as compression
+
+    // Verify we can get readable/writable from compression
+    const compressReadable = gzipCompression.readable();
+    defer compressReadable.free();
+    const compressWritable = gzipCompression.writable();
+    defer compressWritable.free();
+
+    // Test DecompressionStream creation
+    const gzipDecompression = workers.DecompressionStream.new(.gzip);
+    defer gzipDecompression.free();
+
+    const deflateDecompression = workers.DecompressionStream.new(.deflate);
+    defer deflateDecompression.free();
+
+    // Test asTransform on decompression
+    const decompressTransform = gzipDecompression.asTransform();
+
+    // Test TransformStream creation (just verify it can be created)
+    const transform = workers.TransformStream.new();
+    defer transform.free();
+
+    ctx.json(.{
+        .api = "Streams API",
+        .requestBody = .{
+            .text = bodyText,
+            .length = bodyText.len,
+        },
+        .transformStream = .{
+            .created = transform.id > 0,
+        },
+        .compressionStream = .{
+            .gzipCreated = gzipCompression.id > 0,
+            .deflateCreated = deflateCompression.id > 0,
+            .hasTransform = compressTransform.id > 0,
+            .hasReadable = compressReadable.id > 0,
+            .hasWritable = compressWritable.id > 0,
+        },
+        .decompressionStream = .{
+            .gzipCreated = gzipDecompression.id > 0,
+            .deflateCreated = deflateDecompression.id > 0,
+            .hasTransform = decompressTransform.id > 0,
         },
     }, 200);
 }

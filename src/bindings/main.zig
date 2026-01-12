@@ -142,3 +142,16 @@ pub const url = @import("url.zig");
 pub const URL = url.URL;
 pub const URLPattern = url.URLPattern;
 pub const URLSearchParams = url.URLSearchParams;
+
+// streams exports
+pub const streams = @import("streams/main.zig");
+pub const ReadableStream = streams.ReadableStream;
+pub const WritableStream = streams.WritableStream;
+pub const TransformStream = streams.TransformStream;
+pub const CompressionStream = streams.CompressionStream;
+pub const DecompressionStream = streams.DecompressionStream;
+pub const CompressionFormat = streams.CompressionFormat;
+pub const ReadableStreamDefaultReader = streams.ReadableStreamDefaultReader;
+pub const WritableStreamDefaultWriter = streams.WritableStreamDefaultWriter;
+pub const PipeOptions = streams.PipeOptions;
+pub const PipeThroughOptions = streams.PipeThroughOptions;

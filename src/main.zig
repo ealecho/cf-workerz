@@ -94,6 +94,18 @@ pub const Undefined = bindings.Undefined;
 pub const True = bindings.True;
 pub const False = bindings.False;
 
+// Streams API
+pub const ReadableStream = bindings.ReadableStream;
+pub const WritableStream = bindings.WritableStream;
+pub const TransformStream = bindings.TransformStream;
+pub const CompressionStream = bindings.CompressionStream;
+pub const DecompressionStream = bindings.DecompressionStream;
+pub const CompressionFormat = bindings.CompressionFormat;
+pub const ReadableStreamDefaultReader = bindings.ReadableStreamDefaultReader;
+pub const WritableStreamDefaultWriter = bindings.WritableStreamDefaultWriter;
+pub const PipeOptions = bindings.PipeOptions;
+pub const PipeThroughOptions = bindings.PipeThroughOptions;
+
 // Re-export HTTP types
 pub const http = @import("http/main.zig");
 pub const StatusCode = http.StatusCode;
