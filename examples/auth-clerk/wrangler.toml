@@ -1,0 +1,53 @@
+# cf-workerz + Clerk Auth Worker Configuration
+# See: https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name = "auth-clerk"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Build command - Zig compiles to WASM
+[build]
+command = "zig build"
+
+# WASM module handling
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = false
+
+# ============================================================================
+# Clerk Configuration
+# ============================================================================
+# 
+# Set these secrets using wrangler:
+#   npx wrangler secret put CLERK_SECRET_KEY
+#   npx wrangler secret put CLERK_JWT_KEY  (optional, for networkless verification)
+#
+# You can find these values in your Clerk Dashboard:
+#   https://dashboard.clerk.com/apps/<app-id>/api-keys
+#
+# The CLERK_JWT_KEY enables "networkless" verification - the token is verified
+# locally without making a request to Clerk's servers. This is faster and more
+# reliable, but requires you to keep the key in sync if it rotates.
+
+[vars]
+# Your Clerk Publishable Key (safe to commit)
+# CLERK_PUBLISHABLE_KEY = "pk_test_..."
+
+# ============================================================================
+# Bindings - Uncomment and configure as needed
+# ============================================================================
+
+# D1 Database - Store user data
+# Run: npx wrangler d1 create <database-name>
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "auth-clerk-db"
+# database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# KV Namespace - Cache user sessions or data
+# Run: npx wrangler kv namespace create <namespace-name>
+# [[kv_namespaces]]
+# binding = "KV"
+# id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"

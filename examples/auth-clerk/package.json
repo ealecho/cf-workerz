@@ -1,0 +1,17 @@
+{
+  "name": "auth-clerk",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "zig build",
+    "dev": "npx wrangler@latest dev --port 8787",
+    "deploy": "npx wrangler@latest deploy"
+  },
+  "dependencies": {
+    "@clerk/backend": "^1.21.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "typescript": "^5.6.3"
+  }
+}
