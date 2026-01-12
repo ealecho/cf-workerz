@@ -2332,20 +2332,6 @@ These features are complete and production-ready:
 
 ---
 
-### Recently Completed (formerly Partial ⚠️ → now ✅)
-
-These features are now fully implemented:
-
-| Feature | workers-rs | cf-workerz | Status |
-|---------|-----------|------------|--------|
-| Headers | ✅ | ✅ | Full API including `keys()`, `values()`, `entries()` iterators |
-| Streams | ✅ | ✅ | ReadableStream, WritableStream, TransformStream, Compression/Decompression with piping |
-| **Durable Objects** | ✅ | ✅ | Full implementation with state, storage, alarms, SQL, WebSocket hibernation |
-| **WebSockets** | ✅ | ✅ | Inbound upgrades, outbound connections, events, hibernation |
-| **SubtleCrypto** | ✅ | ✅ | Full Web Crypto API: digest, encrypt, decrypt, sign, verify, key generation, import/export, derivation, wrapping + convenience hashes (`sha256()`, `sha1()`, etc.) |
-
----
-
 ### Not Started (➖)
 
 These features exist in workers-rs but have no implementation in cf-workerz:
