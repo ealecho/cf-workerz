@@ -330,6 +330,36 @@ fn handleStreams(ctx: *FetchContext) void {
 }
 ```
 
+### ReadableStreamDefaultReader
+
+```zig
+fn readWithReader(ctx: *FetchContext) void {
+    const body = ctx.req.body();
+    defer body.free();
+    
+    // Get a reader (locks the stream)
+    const reader = body.getReader();
+    defer reader.free();
+    
+    // Read chunks until done
+    var totalBytes: usize = 0;
+    while (true) {
+        const result = reader.read();
+        if (result.done) break;
+        if (result.value) |chunk| {
+            totalBytes += chunk.len;
+            // process chunk bytes
+        }
+    }
+    
+    // Cancel reading early
+    // reader.cancel();
+    
+    // Release lock without freeing
+    // reader.releaseLock();
+}
+```
+
 ### Stream Piping
 
 ```zig

@@ -89,3 +89,76 @@ pub const Array = struct {
         return jsSize(self.id);
     }
 };
+
+// External function for getting bytes from JS heap objects
+pub extern fn jsToBytes(ptr: u32) u32;
+
+/// Uint8Array binding for working with binary data.
+///
+/// This is a binding to the JavaScript Uint8Array class.
+/// See: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array
+///
+/// ## Example
+///
+/// ```zig
+/// const arr = Uint8Array.init(jsPtr);
+/// defer arr.free();
+///
+/// const data = arr.bytes();
+/// // use data bytes
+/// ```
+pub const Uint8Array = struct {
+    id: u32,
+
+    /// Initialize from an existing JavaScript heap pointer.
+    pub fn init(ptr: u32) Uint8Array {
+        return Uint8Array{ .id = ptr };
+    }
+
+    /// Create a new Uint8Array from a byte slice.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const data = [_]u8{ 0x48, 0x65, 0x6c, 0x6c, 0x6f };
+    /// const arr = Uint8Array.new(&data);
+    /// defer arr.free();
+    /// ```
+    pub fn new(data: []const u8) Uint8Array {
+        // Create ArrayBuffer first, then Uint8Array from it
+        const bufId = jsToBuffer(@intFromPtr(data.ptr), data.len);
+        const args = Array.new();
+        defer args.free();
+        args.pushID(bufId);
+        defer jsFree(bufId);
+        return Uint8Array{ .id = jsCreateClass(Classes.Uint8Array.toInt(), args.id) };
+    }
+
+    /// Free the Uint8Array from the JavaScript heap.
+    pub fn free(self: *const Uint8Array) void {
+        jsFree(self.id);
+    }
+
+    /// Get the bytes from this Uint8Array.
+    ///
+    /// Returns a slice pointing to the data copied into WASM linear memory.
+    pub fn bytes(self: *const Uint8Array) []const u8 {
+        const len = jsSize(self.id);
+        if (len == 0) {
+            return "";
+        }
+        // jsToBytes copies the bytes to WASM memory and returns the pointer
+        const ptr = jsToBytes(self.id);
+        if (ptr == 0) {
+            return "";
+        }
+        return @as([*]const u8, @ptrFromInt(ptr))[0..len];
+    }
+
+    /// Get the length of this Uint8Array.
+    pub fn length(self: *const Uint8Array) u32 {
+        return jsSize(self.id);
+    }
+};
+
+// External function for creating ArrayBuffer from WASM memory
+pub extern fn jsToBuffer(ptr: u32, len: usize) u32;

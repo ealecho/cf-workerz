@@ -4,6 +4,7 @@
 // array.zig exports
 pub const array = @import("array.zig");
 pub const Array = array.Array;
+pub const Uint8Array = array.Uint8Array;
 pub const arrayPushNum = array.arrayPushNum;
 pub const jsArrayPush = array.jsArrayPush;
 pub const jsArrayPushNum = array.jsArrayPushNum;
@@ -79,7 +80,10 @@ pub const ExecutionContext = executionContext.ExecutionContext;
 pub const formData = @import("formData.zig");
 pub const FormEntry = formData.FormEntry;
 pub const File = formData.File;
+pub const FileOptions = formData.FileOptions;
 pub const FormData = formData.FormData;
+pub const FormDataIterator = formData.FormDataIterator;
+pub const FormDataEntry = formData.FormDataEntry;
 
 // function.zig exports
 pub const function = @import("function.zig");
@@ -142,6 +146,8 @@ pub const url = @import("url.zig");
 pub const URL = url.URL;
 pub const URLPattern = url.URLPattern;
 pub const URLSearchParams = url.URLSearchParams;
+pub const URLSearchParamsIterator = url.URLSearchParamsIterator;
+pub const URLSearchParamsEntry = url.URLSearchParamsEntry;
 
 // streams exports
 pub const streams = @import("streams/main.zig");
@@ -153,5 +159,6 @@ pub const DecompressionStream = streams.DecompressionStream;
 pub const CompressionFormat = streams.CompressionFormat;
 pub const ReadableStreamDefaultReader = streams.ReadableStreamDefaultReader;
 pub const WritableStreamDefaultWriter = streams.WritableStreamDefaultWriter;
-pub const PipeOptions = streams.PipeOptions;
+pub const PipeToOptions = streams.PipeToOptions;
 pub const PipeThroughOptions = streams.PipeThroughOptions;
+pub const ReadResult = streams.ReadResult;

@@ -38,6 +38,140 @@ const WritableStream = @import("writable.zig").WritableStream;
 const TransformStream = @import("transform.zig").TransformStream;
 const Array = @import("../array.zig").Array;
 const String = @import("../string.zig").String;
+const Uint8Array = @import("../array.zig").Uint8Array;
+
+/// Result from reading a chunk from a ReadableStreamDefaultReader.
+///
+/// When `done` is true, the stream is exhausted and `value` will be null.
+/// When `done` is false, `value` contains the chunk data.
+pub const ReadResult = struct {
+    /// The chunk data, or null if the stream is done.
+    value: ?[]const u8,
+    /// True if the stream has been fully read.
+    done: bool,
+};
+
+/// A reader for a ReadableStream that allows reading chunks.
+///
+/// Obtained via `ReadableStream.getReader()`. While a reader is active,
+/// the stream is locked and cannot be read by other consumers.
+///
+/// ## Example
+///
+/// ```zig
+/// const stream = response.body();
+/// defer stream.free();
+///
+/// const reader = stream.getReader();
+/// defer reader.free();
+///
+/// while (true) {
+///     const result = reader.read();
+///     if (result.done) break;
+///     if (result.value) |chunk| {
+///         // process chunk
+///     }
+/// }
+/// ```
+pub const ReadableStreamDefaultReader = struct {
+    id: u32,
+
+    /// Initialize from an existing JavaScript heap pointer.
+    pub fn init(ptr: u32) ReadableStreamDefaultReader {
+        return ReadableStreamDefaultReader{ .id = ptr };
+    }
+
+    /// Free the reader from the JavaScript heap.
+    ///
+    /// Note: This does NOT release the lock on the stream.
+    /// Call `releaseLock()` first if you want to unlock the stream.
+    pub fn free(self: ReadableStreamDefaultReader) void {
+        jsFree(self.id);
+    }
+
+    /// Read the next chunk from the stream.
+    ///
+    /// Returns a ReadResult with:
+    /// - `done`: true if the stream is exhausted
+    /// - `value`: the chunk data (null if done)
+    ///
+    /// ## Example
+    /// ```zig
+    /// const result = reader.read();
+    /// if (!result.done) {
+    ///     if (result.value) |chunk| {
+    ///         // process chunk bytes
+    ///     }
+    /// }
+    /// ```
+    pub fn read(self: *const ReadableStreamDefaultReader) ReadResult {
+        const func = AsyncFunction{ .id = getObjectValue(self.id, "read") };
+        defer func.free();
+
+        const resultPtr = func.call();
+        if (resultPtr <= common.DefaultValueSize) {
+            return ReadResult{ .value = null, .done = true };
+        }
+        defer jsFree(resultPtr);
+
+        // Result is { done: boolean, value: Uint8Array | undefined }
+        const donePtr = getObjectValue(resultPtr, "done");
+        const done = donePtr == True;
+
+        if (done) {
+            return ReadResult{ .value = null, .done = true };
+        }
+
+        const valuePtr = getObjectValue(resultPtr, "value");
+        if (valuePtr <= common.DefaultValueSize) {
+            return ReadResult{ .value = null, .done = false };
+        }
+
+        // Value is a Uint8Array
+        const arr = Uint8Array.init(valuePtr);
+        defer arr.free();
+        const bytes = arr.bytes();
+
+        return ReadResult{ .value = bytes, .done = false };
+    }
+
+    /// Cancel the stream with an optional reason.
+    ///
+    /// This signals that the consumer is no longer interested in the stream.
+    pub fn cancel(self: *const ReadableStreamDefaultReader) void {
+        const func = AsyncFunction{ .id = getObjectValue(self.id, "cancel") };
+        defer func.free();
+        _ = func.call();
+    }
+
+    /// Cancel the stream with a reason.
+    pub fn cancelWithReason(self: *const ReadableStreamDefaultReader, reason: []const u8) void {
+        const func = AsyncFunction{ .id = getObjectValue(self.id, "cancel") };
+        defer func.free();
+        const reasonStr = String.new(reason);
+        defer reasonStr.free();
+        _ = func.callArgs(&reasonStr);
+    }
+
+    /// Release the lock on the stream.
+    ///
+    /// After calling this, the reader can no longer be used to read,
+    /// but the stream can be acquired by another reader.
+    pub fn releaseLock(self: *const ReadableStreamDefaultReader) void {
+        const func = Function.init(getObjectValue(self.id, "releaseLock"));
+        defer func.free();
+        _ = func.call();
+    }
+
+    /// Returns a promise that resolves when the stream closes.
+    ///
+    /// Note: In the current implementation, this blocks until closed.
+    pub fn closed(self: *const ReadableStreamDefaultReader) void {
+        const func = AsyncFunction{ .id = getObjectValue(self.id, "closed") };
+        defer func.free();
+        _ = func.call();
+    }
+};
 
 /// Options for ReadableStream.pipeTo().
 ///
@@ -236,5 +370,115 @@ pub const ReadableStream = struct {
             ReadableStream.init(arr.get(0)),
             ReadableStream.init(arr.get(1)),
         };
+    }
+
+    /// Get a reader to read the stream chunk by chunk.
+    ///
+    /// The stream becomes locked while the reader is active.
+    /// Call `releaseLock()` on the reader to unlock the stream.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const reader = stream.getReader();
+    /// defer reader.free();
+    ///
+    /// while (true) {
+    ///     const result = reader.read();
+    ///     if (result.done) break;
+    ///     if (result.value) |chunk| {
+    ///         // process chunk
+    ///     }
+    /// }
+    /// ```
+    pub fn getReader(self: *const ReadableStream) ReadableStreamDefaultReader {
+        const func = Function.init(getObjectValue(self.id, "getReader"));
+        defer func.free();
+        const result = func.call();
+        return ReadableStreamDefaultReader.init(result);
+    }
+
+    /// Read the entire stream as a string.
+    ///
+    /// This is a convenience method that reads all chunks and concatenates them.
+    /// The stream will be fully consumed after calling this method.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const body = response.body();
+    /// defer body.free();
+    ///
+    /// const text = body.text();
+    /// // use text
+    /// ```
+    pub fn text(self: *const ReadableStream) ?[]const u8 {
+        // Use Response to consume the stream as text
+        // This is the standard way in the Workers runtime
+        const responseClass = common.jsGetClass(Classes.Response.toInt());
+        defer jsFree(responseClass);
+
+        // Create a Response with this stream as body
+        const args = Array.new();
+        defer args.free();
+        args.pushID(self.id);
+
+        const responseId = jsCreateClass(Classes.Response.toInt(), args.id);
+        defer jsFree(responseId);
+
+        // Call response.text()
+        const textFunc = AsyncFunction{ .id = getObjectValue(responseId, "text") };
+        defer textFunc.free();
+        const result = textFunc.call();
+
+        if (result <= common.DefaultValueSize) {
+            return null;
+        }
+
+        const str = String.init(result);
+        defer str.free();
+        return str.value();
+    }
+
+    /// Read the entire stream as bytes.
+    ///
+    /// This is a convenience method that reads all chunks and concatenates them.
+    /// The stream will be fully consumed after calling this method.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const body = response.body();
+    /// defer body.free();
+    ///
+    /// const data = body.bytes();
+    /// // use data
+    /// ```
+    pub fn bytes(self: *const ReadableStream) ?[]const u8 {
+        // Use Response to consume the stream as bytes
+        const args = Array.new();
+        defer args.free();
+        args.pushID(self.id);
+
+        const responseId = jsCreateClass(Classes.Response.toInt(), args.id);
+        defer jsFree(responseId);
+
+        // Call response.arrayBuffer()
+        const abFunc = AsyncFunction{ .id = getObjectValue(responseId, "arrayBuffer") };
+        defer abFunc.free();
+        const result = abFunc.call();
+
+        if (result <= common.DefaultValueSize) {
+            return null;
+        }
+
+        // Convert ArrayBuffer to Uint8Array to get bytes
+        const uint8Args = Array.new();
+        defer uint8Args.free();
+        uint8Args.pushID(result);
+        defer jsFree(result);
+
+        const uint8ArrayId = jsCreateClass(Classes.Uint8Array.toInt(), uint8Args.id);
+        const arr = Uint8Array.init(uint8ArrayId);
+        defer arr.free();
+
+        return arr.bytes();
     }
 };

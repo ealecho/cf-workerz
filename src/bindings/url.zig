@@ -23,6 +23,13 @@
 //! defer params2.free();
 //! params2.append("key", "value");
 //! const qs = params2.toString(); // "key=value"
+//!
+//! // Iterate over parameters
+//! var entries = params.entries();
+//! defer entries.free();
+//! while (entries.nextEntry()) |entry| {
+//!     // entry.name, entry.value
+//! }
 //! ```
 
 const String = @import("string.zig").String;
@@ -37,6 +44,159 @@ const JSValue = common.JSValue;
 const jsCreateClass = common.jsCreateClass;
 const jsFree = common.jsFree;
 const getObjectValue = object.getObjectValue;
+
+/// Represents a URL search parameter name/value pair.
+///
+/// Used as the return type for `URLSearchParamsIterator.nextEntry()`.
+pub const URLSearchParamsEntry = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
+/// Iterator for URLSearchParams keys, values, or entries.
+///
+/// ## Example
+///
+/// ```zig
+/// // Iterate over parameter names
+/// var keys = params.keys();
+/// defer keys.free();
+/// while (keys.next()) |key| {
+///     // key == "name", "page", etc.
+/// }
+///
+/// // Iterate over parameter values
+/// var values = params.values();
+/// defer values.free();
+/// while (values.next()) |value| {
+///     // value == "Alice", "1", etc.
+/// }
+///
+/// // Iterate over entries (name/value pairs)
+/// var entries = params.entries();
+/// defer entries.free();
+/// while (entries.nextEntry()) |entry| {
+///     // entry.name == "name"
+///     // entry.value == "Alice"
+/// }
+/// ```
+pub const URLSearchParamsIterator = struct {
+    arr: Array,
+    pos: u32 = 0,
+    len: u32,
+    mode: IteratorMode,
+
+    pub const IteratorMode = enum {
+        keys,
+        values,
+        entries,
+    };
+
+    pub fn init(jsPtr: u32, mode: IteratorMode) URLSearchParamsIterator {
+        const arr = Array.init(jsPtr);
+        return URLSearchParamsIterator{
+            .arr = arr,
+            .len = arr.length(),
+            .mode = mode,
+        };
+    }
+
+    /// Free the iterator resources.
+    pub fn free(self: *const URLSearchParamsIterator) void {
+        self.arr.free();
+    }
+
+    /// Get the next string value (for keys or values mode).
+    ///
+    /// For entries mode, this returns only the key portion.
+    ///
+    /// ## Example
+    /// ```zig
+    /// var keys = params.keys();
+    /// defer keys.free();
+    /// while (keys.next()) |key| {
+    ///     // key == "name"
+    /// }
+    /// ```
+    pub fn next(self: *URLSearchParamsIterator) ?[]const u8 {
+        if (self.pos >= self.len) return null;
+        const itemPtr = self.arr.get(self.pos);
+        self.pos += 1;
+
+        if (itemPtr <= common.DefaultValueSize) {
+            return null;
+        }
+
+        if (self.mode == .entries) {
+            // For entries, return the key (first element of the [key, value] array)
+            const entryArr = Array.init(itemPtr);
+            defer entryArr.free();
+            const keyPtr = entryArr.get(0);
+            if (keyPtr <= common.DefaultValueSize) {
+                return null;
+            }
+            const keyStr = String.init(keyPtr);
+            defer keyStr.free();
+            return keyStr.value();
+        }
+
+        const str = String.init(itemPtr);
+        defer str.free();
+        return str.value();
+    }
+
+    /// Get the next entry as a URLSearchParamsEntry (for entries mode).
+    ///
+    /// ## Example
+    /// ```zig
+    /// var entries = params.entries();
+    /// defer entries.free();
+    /// while (entries.nextEntry()) |entry| {
+    ///     // entry.name == "name"
+    ///     // entry.value == "Alice"
+    /// }
+    /// ```
+    pub fn nextEntry(self: *URLSearchParamsIterator) ?URLSearchParamsEntry {
+        if (self.pos >= self.len) return null;
+        const itemPtr = self.arr.get(self.pos);
+        self.pos += 1;
+
+        if (itemPtr <= common.DefaultValueSize) {
+            return null;
+        }
+
+        // Each entry is a [key, value] array
+        const entryArr = Array.init(itemPtr);
+        defer entryArr.free();
+
+        const keyPtr = entryArr.get(0);
+        const valuePtr = entryArr.get(1);
+
+        if (keyPtr <= common.DefaultValueSize or valuePtr <= common.DefaultValueSize) {
+            return null;
+        }
+
+        const keyStr = String.init(keyPtr);
+        defer keyStr.free();
+        const valueStr = String.init(valuePtr);
+        defer valueStr.free();
+
+        return URLSearchParamsEntry{
+            .name = keyStr.value(),
+            .value = valueStr.value(),
+        };
+    }
+
+    /// Reset the iterator to the beginning.
+    pub fn reset(self: *URLSearchParamsIterator) void {
+        self.pos = 0;
+    }
+
+    /// Get the total count of items.
+    pub fn count(self: *const URLSearchParamsIterator) u32 {
+        return self.len;
+    }
+};
 
 /// URLSearchParams provides methods to work with the query string of a URL.
 ///
@@ -278,6 +438,99 @@ pub const URLSearchParams = struct {
 
         const res = JSValue.init(func.call());
         defer res.free();
+    }
+
+    /// Get an iterator over all parameter names.
+    ///
+    /// The caller must free the returned iterator.
+    ///
+    /// ## Example
+    /// ```zig
+    /// var keys = params.keys();
+    /// defer keys.free();
+    /// while (keys.next()) |key| {
+    ///     // key == "name", "page", etc.
+    /// }
+    /// ```
+    pub fn keys(self: *const URLSearchParams) URLSearchParamsIterator {
+        const func = Function.init(getObjectValue(self.id, "keys"));
+        defer func.free();
+
+        // Convert iterator to array via Array.from()
+        const iterResult = func.call();
+        const arrayClass = common.jsGetClass(Classes.Array.toInt());
+        defer jsFree(arrayClass);
+
+        const fromFunc = Function.init(getObjectValue(arrayClass, "from"));
+        defer fromFunc.free();
+
+        const iterWrapper = JSValue.init(iterResult);
+        const arrayResult = fromFunc.callArgs(&iterWrapper);
+        jsFree(iterResult);
+
+        return URLSearchParamsIterator.init(arrayResult, .keys);
+    }
+
+    /// Get an iterator over all parameter values.
+    ///
+    /// The caller must free the returned iterator.
+    ///
+    /// ## Example
+    /// ```zig
+    /// var values = params.values();
+    /// defer values.free();
+    /// while (values.next()) |value| {
+    ///     // value == "Alice", "1", etc.
+    /// }
+    /// ```
+    pub fn values(self: *const URLSearchParams) URLSearchParamsIterator {
+        const func = Function.init(getObjectValue(self.id, "values"));
+        defer func.free();
+
+        const iterResult = func.call();
+        const arrayClass = common.jsGetClass(Classes.Array.toInt());
+        defer jsFree(arrayClass);
+
+        const fromFunc = Function.init(getObjectValue(arrayClass, "from"));
+        defer fromFunc.free();
+
+        const iterWrapper = JSValue.init(iterResult);
+        const arrayResult = fromFunc.callArgs(&iterWrapper);
+        jsFree(iterResult);
+
+        return URLSearchParamsIterator.init(arrayResult, .values);
+    }
+
+    /// Get an iterator over all parameter entries (name/value pairs).
+    ///
+    /// Use `nextEntry()` on the returned iterator to get `URLSearchParamsEntry` structs.
+    /// The caller must free the returned iterator.
+    ///
+    /// ## Example
+    /// ```zig
+    /// var entries = params.entries();
+    /// defer entries.free();
+    /// while (entries.nextEntry()) |entry| {
+    ///     // entry.name == "name"
+    ///     // entry.value == "Alice"
+    /// }
+    /// ```
+    pub fn entries(self: *const URLSearchParams) URLSearchParamsIterator {
+        const func = Function.init(getObjectValue(self.id, "entries"));
+        defer func.free();
+
+        const iterResult = func.call();
+        const arrayClass = common.jsGetClass(Classes.Array.toInt());
+        defer jsFree(arrayClass);
+
+        const fromFunc = Function.init(getObjectValue(arrayClass, "from"));
+        defer fromFunc.free();
+
+        const iterWrapper = JSValue.init(iterResult);
+        const arrayResult = fromFunc.callArgs(&iterWrapper);
+        jsFree(iterResult);
+
+        return URLSearchParamsIterator.init(arrayResult, .entries);
     }
 };
 

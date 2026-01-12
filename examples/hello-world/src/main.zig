@@ -84,6 +84,10 @@ const routes: []const Route = &.{
     Route.get("/test/query", handleTestQuery),
     Route.get("/test/headers", handleTestHeaders),
     Route.post("/test/streams", handleTestStreams),
+    Route.get("/test/url-iterators", handleTestUrlIterators),
+    Route.post("/test/formdata-entries", handleTestFormDataEntries),
+    Route.post("/test/reader", handleTestReader),
+    Route.get("/test/file", handleTestFile),
 };
 
 // ============================================================================
@@ -614,6 +618,214 @@ fn handleTestStreams(ctx: *FetchContext) void {
             .gzipCreated = gzipDecompression.id > 0,
             .deflateCreated = deflateDecompression.id > 0,
             .hasTransform = decompressTransform.id > 0,
+        },
+    }, 200);
+}
+
+/// Test URLSearchParams iterators API
+/// GET /test/url-iterators?name=Alice&age=30&city=NYC
+fn handleTestUrlIterators(ctx: *FetchContext) void {
+    // Create params with some values
+    const params = workers.URLSearchParams.new();
+    defer params.free();
+
+    params.append("name", "Alice");
+    params.append("age", "30");
+    params.append("city", "NYC");
+    params.append("hobbies", "coding");
+    params.append("hobbies", "reading");
+
+    // Test keys() iterator
+    var keysIter = params.keys();
+    defer keysIter.free();
+    var keyCount: u32 = 0;
+    var firstKey: ?[]const u8 = null;
+    while (keysIter.next()) |key| {
+        if (keyCount == 0) {
+            firstKey = key;
+        }
+        keyCount += 1;
+    }
+
+    // Test values() iterator
+    var valuesIter = params.values();
+    defer valuesIter.free();
+    var valueCount: u32 = 0;
+    var firstValue: ?[]const u8 = null;
+    while (valuesIter.next()) |value| {
+        if (valueCount == 0) {
+            firstValue = value;
+        }
+        valueCount += 1;
+    }
+
+    // Test entries() iterator with nextEntry()
+    var entriesIter = params.entries();
+    defer entriesIter.free();
+    var entryCount: u32 = 0;
+    var sampleName: ?[]const u8 = null;
+    var sampleValue: ?[]const u8 = null;
+    while (entriesIter.nextEntry()) |entry| {
+        if (entryCount == 0) {
+            sampleName = entry.name;
+            sampleValue = entry.value;
+        }
+        entryCount += 1;
+    }
+
+    ctx.json(.{
+        .api = "URLSearchParams Iterators",
+        .keys = .{
+            .count = keyCount,
+            .first = firstKey orelse "(none)",
+        },
+        .values = .{
+            .count = valueCount,
+            .first = firstValue orelse "(none)",
+        },
+        .entries = .{
+            .count = entryCount,
+            .sampleName = sampleName orelse "(none)",
+            .sampleValue = sampleValue orelse "(none)",
+        },
+    }, 200);
+}
+
+/// Test FormData entries() iterator
+/// POST /test/formdata-entries
+fn handleTestFormDataEntries(ctx: *FetchContext) void {
+    // Create FormData with multiple entries
+    const form = workers.FormData.new();
+    defer form.free();
+
+    form.append("username", "alice");
+    form.append("email", "alice@example.com");
+    form.append("role", "admin");
+
+    // Test entries() iterator
+    var entriesIter = form.entries();
+    defer entriesIter.free();
+    var entryCount: u32 = 0;
+    var firstFieldName: ?[]const u8 = null;
+    var firstFieldValue: ?[]const u8 = null;
+
+    while (entriesIter.nextEntry()) |entry| {
+        if (entryCount == 0) {
+            firstFieldName = entry.name;
+            switch (entry.value) {
+                .field => |value| {
+                    firstFieldValue = value;
+                },
+                .file => |_| {
+                    firstFieldValue = "(file)";
+                },
+            }
+        }
+        entryCount += 1;
+    }
+
+    // Test reset and count
+    entriesIter.reset();
+    const totalCount = entriesIter.count();
+
+    ctx.json(.{
+        .api = "FormData entries() iterator",
+        .entries = .{
+            .count = entryCount,
+            .totalCount = totalCount,
+            .firstFieldName = firstFieldName orelse "(none)",
+            .firstFieldValue = firstFieldValue orelse "(none)",
+        },
+    }, 200);
+}
+
+/// Test ReadableStreamDefaultReader API
+/// POST /test/reader with body content
+fn handleTestReader(ctx: *FetchContext) void {
+    // Get the request body as a stream
+    const body = ctx.req.body();
+    defer body.free();
+
+    // Check if locked
+    const wasLocked = body.locked();
+
+    // Get a reader
+    const reader = body.getReader();
+    defer reader.free();
+
+    // Now it should be locked
+    const isLockedAfterReader = body.locked();
+
+    // Read chunks (we'll read until done)
+    var chunkCount: u32 = 0;
+    var totalBytes: usize = 0;
+    var allDone = false;
+
+    while (!allDone) {
+        const result = reader.read();
+        if (result.done) {
+            allDone = true;
+        } else if (result.value) |chunk| {
+            chunkCount += 1;
+            totalBytes += chunk.len;
+        }
+    }
+
+    ctx.json(.{
+        .api = "ReadableStreamDefaultReader",
+        .stream = .{
+            .wasLocked = wasLocked,
+            .isLockedAfterReader = isLockedAfterReader,
+        },
+        .reading = .{
+            .chunkCount = chunkCount,
+            .totalBytes = totalBytes,
+            .done = allDone,
+        },
+    }, 200);
+}
+
+/// Test File.new() constructor
+/// GET /test/file
+fn handleTestFile(ctx: *FetchContext) void {
+    // Create a file from text
+    const textFile = workers.File.new("Hello, World!", "hello.txt", .{
+        .contentType = "text/plain",
+    });
+    defer textFile.free();
+
+    // Create a file from bytes
+    const bytes = [_]u8{ 0x48, 0x65, 0x6c, 0x6c, 0x6f }; // "Hello"
+    const binaryFile = workers.File.fromBytes(&bytes, "hello.bin", .{
+        .contentType = "application/octet-stream",
+        .lastModified = 1704067200000, // 2024-01-01
+    });
+    defer binaryFile.free();
+
+    // Read properties
+    const textFileName = textFile.name();
+    const textFileSize = textFile.size();
+    const textFileType = textFile.contentType();
+    const textContent = textFile.text();
+
+    const binFileName = binaryFile.name();
+    const binFileSize = binaryFile.size();
+    const binFileType = binaryFile.contentType();
+    const binLastMod = binaryFile.lastModified();
+
+    ctx.json(.{
+        .api = "File.new() constructor",
+        .textFile = .{
+            .name = textFileName,
+            .size = textFileSize,
+            .type = textFileType,
+            .content = textContent,
+        },
+        .binaryFile = .{
+            .name = binFileName,
+            .size = binFileSize,
+            .type = binFileType,
+            .lastModified = binLastMod,
         },
     }, 200);
 }

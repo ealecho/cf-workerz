@@ -4,7 +4,8 @@
 pub const readable = @import("readable.zig");
 pub const ReadableStream = readable.ReadableStream;
 pub const ReadableStreamDefaultReader = readable.ReadableStreamDefaultReader;
-pub const PipeOptions = readable.PipeOptions;
+pub const PipeToOptions = readable.PipeToOptions;
+pub const ReadResult = readable.ReadResult;
 pub const PipeThroughOptions = readable.PipeThroughOptions;
 
 // writable.zig exports

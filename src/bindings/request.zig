@@ -23,6 +23,7 @@ const ArrayBuffer = @import("arraybuffer.zig").ArrayBuffer;
 const FormData = @import("formData.zig").FormData;
 const Blob = @import("blob.zig").Blob;
 const getObjectValue = @import("object.zig").getObjectValue;
+const ReadableStream = @import("streams/readable.zig").ReadableStream;
 
 pub const Redirect = enum {
     Follow,
@@ -198,14 +199,33 @@ pub const Request = struct {
 
     // check that body is ReadableStream
     pub fn hasBody(self: *const Request) bool {
-        const body = getObjectValue(self.id, "body");
-        defer jsFree(body);
-        return body != Null;
+        const bodyPtr = getObjectValue(self.id, "body");
+        defer jsFree(bodyPtr);
+        return bodyPtr != Null;
     }
 
     pub fn bodyUsed(self: *const Request) bool {
         const bUsed = getObjectValue(self.id, "bodyUsed");
         return bUsed == True;
+    }
+
+    /// Get the request body as a ReadableStream.
+    ///
+    /// Returns null if the request has no body.
+    /// The caller must free the returned ReadableStream.
+    ///
+    /// ## Example
+    /// ```zig
+    /// if (request.body()) |stream| {
+    ///     defer stream.free();
+    ///     const reader = stream.getReader();
+    ///     defer reader.free();
+    ///     // read from stream
+    /// }
+    /// ```
+    pub fn body(self: *const Request) ReadableStream {
+        const bodyPtr = getObjectValue(self.id, "body");
+        return ReadableStream.init(bodyPtr);
     }
 
     pub fn arrayBuffer(self: *const Request) ?ArrayBuffer {

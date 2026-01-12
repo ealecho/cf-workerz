@@ -47,6 +47,14 @@ const jsCreateClass = common.jsCreateClass;
 const jsFree = common.jsFree;
 const getObjectValue = object.getObjectValue;
 
+/// Options for creating a new File.
+pub const FileOptions = struct {
+    /// The MIME type of the file (e.g., "text/plain", "image/png").
+    contentType: ?[]const u8 = null,
+    /// The last modified timestamp (milliseconds since Unix epoch).
+    lastModified: ?u64 = null,
+};
+
 /// Represents a file from a FormData entry.
 ///
 /// File is a specific kind of Blob that represents file data with additional
@@ -76,6 +84,96 @@ pub const File = struct {
     /// Initialize from an existing JavaScript heap pointer.
     pub fn init(ptr: u32) File {
         return File{ .id = ptr };
+    }
+
+    /// Create a new File from data and a filename.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const data = "Hello, World!";
+    /// const file = File.new(data, "hello.txt", .{});
+    /// defer file.free();
+    /// ```
+    pub fn new(data: []const u8, filename: []const u8, options: FileOptions) File {
+        // File constructor: new File(bits, name, options)
+        // bits is an array of data parts
+        const jsData = String.new(data);
+        defer jsData.free();
+
+        const bits = Array.new();
+        defer bits.free();
+        bits.push(&jsData);
+
+        const jsName = String.new(filename);
+        defer jsName.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.push(&bits);
+        args.push(&jsName);
+
+        // Add options if provided
+        if (options.contentType != null or options.lastModified != null) {
+            const opts = object.Object.new();
+            defer opts.free();
+            if (options.contentType) |ct| {
+                opts.setText("type", ct);
+            }
+            if (options.lastModified) |lm| {
+                opts.setNum("lastModified", f64, @floatFromInt(lm));
+            }
+            args.push(&opts);
+        }
+
+        return File{ .id = jsCreateClass(Classes.File.toInt(), args.id) };
+    }
+
+    /// Create a new File from bytes.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const bytes = [_]u8{ 0x48, 0x65, 0x6c, 0x6c, 0x6f };
+    /// const file = File.fromBytes(&bytes, "hello.bin", .{});
+    /// defer file.free();
+    /// ```
+    pub fn fromBytes(data: []const u8, filename: []const u8, options: FileOptions) File {
+        // Create Uint8Array from bytes
+        const bufId = common.jsToBuffer(data.ptr, data.len);
+        defer jsFree(bufId);
+
+        const uint8Args = Array.new();
+        defer uint8Args.free();
+        uint8Args.pushID(bufId);
+
+        const uint8ArrayId = jsCreateClass(Classes.Uint8Array.toInt(), uint8Args.id);
+        defer jsFree(uint8ArrayId);
+
+        // bits array containing the Uint8Array
+        const bits = Array.new();
+        defer bits.free();
+        bits.pushID(uint8ArrayId);
+
+        const jsName = String.new(filename);
+        defer jsName.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.push(&bits);
+        args.push(&jsName);
+
+        if (options.contentType != null or options.lastModified != null) {
+            const opts = object.Object.new();
+            defer opts.free();
+            if (options.contentType) |ct| {
+                opts.setText("type", ct);
+            }
+            if (options.lastModified) |lm| {
+                opts.setNum("lastModified", f64, @floatFromInt(lm));
+            }
+            args.push(&opts);
+        }
+
+        return File{ .id = jsCreateClass(Classes.File.toInt(), args.id) };
     }
 
     /// Free the File object from the JavaScript heap.
@@ -454,15 +552,81 @@ pub const FormData = struct {
         defer arr.free();
 
         const arrayResult = fromFunc.callArgs(&arr);
-        return FormDataIterator.init(arrayResult);
+        return FormDataIterator.initWithMode(arrayResult, .values);
+    }
+
+    /// Get an iterator over all form entries (name/value pairs).
+    ///
+    /// Use `nextEntry()` on the returned iterator to get `FormDataEntry` structs.
+    /// The caller must free the returned iterator.
+    ///
+    /// ## Example
+    /// ```zig
+    /// var entries = form.entries();
+    /// defer entries.free();
+    /// while (entries.nextEntry()) |entry| {
+    ///     // entry.name == "username"
+    ///     switch (entry.value) {
+    ///         .field => |text| {
+    ///             // text value
+    ///         },
+    ///         .file => |file| {
+    ///             defer file.free();
+    ///             // file value
+    ///         },
+    ///     }
+    /// }
+    /// ```
+    pub fn entries(self: *const FormData) FormDataIterator {
+        const func = Function.init(getObjectValue(self.id, "entries"));
+        defer func.free();
+
+        const iterResult = func.call();
+        const arrayClass = common.jsGetClass(Classes.Array.toInt());
+        defer jsFree(arrayClass);
+
+        const fromFunc = Function.init(getObjectValue(arrayClass, "from"));
+        defer fromFunc.free();
+
+        const iterWrapper = JSValue.init(iterResult);
+        const arrayResult = fromFunc.callArgs(&iterWrapper);
+        jsFree(iterResult);
+
+        return FormDataIterator.initWithMode(arrayResult, .entries);
     }
 };
 
-/// Iterator for FormData keys/values.
+/// Iterator for FormData keys, values, or entries.
+///
+/// ## Example
+///
+/// ```zig
+/// // Iterate over field names
+/// var keys = form.keys();
+/// defer keys.free();
+/// while (keys.next()) |key| {
+///     // key == "name", "email", etc.
+/// }
+///
+/// // Iterate over entries (name/value pairs)
+/// var entries = form.entries();
+/// defer entries.free();
+/// while (entries.nextEntry()) |entry| {
+///     // entry.name == "username"
+///     // entry.value is FormEntry (either .field or .file)
+/// }
+/// ```
 pub const FormDataIterator = struct {
     arr: Array,
     pos: u32 = 0,
     len: u32,
+    mode: IteratorMode = .keys,
+
+    pub const IteratorMode = enum {
+        keys,
+        values,
+        entries,
+    };
 
     pub fn init(jsPtr: u32) FormDataIterator {
         const arr = Array.init(jsPtr);
@@ -472,22 +636,106 @@ pub const FormDataIterator = struct {
         };
     }
 
+    pub fn initWithMode(jsPtr: u32, mode: IteratorMode) FormDataIterator {
+        const arr = Array.init(jsPtr);
+        return FormDataIterator{
+            .arr = arr,
+            .len = arr.length(),
+            .mode = mode,
+        };
+    }
+
     pub fn free(self: *const FormDataIterator) void {
         self.arr.free();
     }
 
+    /// Get the next string value (for keys mode).
     pub fn next(self: *FormDataIterator) ?[]const u8 {
         if (self.pos >= self.len) return null;
-        const strPtr = self.arr.get(self.pos);
+        const itemPtr = self.arr.get(self.pos);
         self.pos += 1;
 
-        if (strPtr <= common.DefaultValueSize) {
+        if (itemPtr <= common.DefaultValueSize) {
             return null;
         }
-        const str = String.init(strPtr);
+
+        if (self.mode == .entries) {
+            // For entries, return the key (first element)
+            const entryArr = Array.init(itemPtr);
+            defer entryArr.free();
+            const keyPtr = entryArr.get(0);
+            if (keyPtr <= common.DefaultValueSize) {
+                return null;
+            }
+            const keyStr = String.init(keyPtr);
+            defer keyStr.free();
+            return keyStr.value();
+        }
+
+        const str = String.init(itemPtr);
         defer str.free();
         return str.value();
     }
+
+    /// Get the next entry as a FormDataEntry (for entries mode).
+    ///
+    /// Note: The FormEntry value should be checked - if it's a File,
+    /// the caller is responsible for freeing it.
+    pub fn nextEntry(self: *FormDataIterator) ?FormDataEntry {
+        if (self.pos >= self.len) return null;
+        const itemPtr = self.arr.get(self.pos);
+        self.pos += 1;
+
+        if (itemPtr <= common.DefaultValueSize) {
+            return null;
+        }
+
+        // Each entry is a [key, value] array
+        const entryArr = Array.init(itemPtr);
+        defer entryArr.free();
+
+        const keyPtr = entryArr.get(0);
+        const valuePtr = entryArr.get(1);
+
+        if (keyPtr <= common.DefaultValueSize or valuePtr <= common.DefaultValueSize) {
+            return null;
+        }
+
+        const keyStr = String.init(keyPtr);
+        defer keyStr.free();
+
+        // Check if value is a File
+        if (object.hasObject(valuePtr, "name") and object.hasObject(valuePtr, "size")) {
+            return FormDataEntry{
+                .name = keyStr.value(),
+                .value = FormEntry{ .file = File.init(valuePtr) },
+            };
+        }
+
+        // It's a string
+        const valueStr = String.init(valuePtr);
+        defer valueStr.free();
+        return FormDataEntry{
+            .name = keyStr.value(),
+            .value = FormEntry{ .field = valueStr.value() },
+        };
+    }
+
+    /// Reset the iterator to the beginning.
+    pub fn reset(self: *FormDataIterator) void {
+        self.pos = 0;
+    }
+
+    /// Get the total count of items.
+    pub fn count(self: *const FormDataIterator) u32 {
+        return self.len;
+    }
+};
+
+/// Represents a FormData entry with name and value.
+pub const FormDataEntry = struct {
+    name: []const u8,
+    value: FormEntry,
 };
 
 // Helper functions
