@@ -38,6 +38,7 @@
 //   GET  /test/bytes           - Test ctx.bytes() binary response
 //   GET  /test/download        - Test ctx.file() download response
 //   POST /test/body-formdata   - Test ctx.bodyFormData() helper
+//   GET  /test/rate-limit      - Test rate limiting API
 //   ANY  /api/protected/*      - Test middleware with auth (dispatchWithMiddleware)
 
 const std = @import("std");
@@ -143,6 +144,7 @@ const routes: []const Route = &.{
     Route.get("/test/bytes", handleTestBytes),
     Route.get("/test/download", handleTestDownload),
     Route.post("/test/body-formdata", handleTestBodyFormData),
+    Route.get("/test/rate-limit", handleTestRateLimit),
 };
 
 // ============================================================================
@@ -1013,6 +1015,43 @@ fn handleTestBodyFormData(ctx: *FetchContext) void {
             .username = usernameValue,
             .email = emailValue,
         },
+    }, 200);
+}
+
+/// Test Rate Limiting API
+/// GET /test/rate-limit
+fn handleTestRateLimit(ctx: *FetchContext) void {
+    const limiter = ctx.env.rateLimiter("RATE_LIMITER") orelse {
+        ctx.json(.{
+            .api = "Rate Limiting",
+            .success = false,
+            .err = "Rate limiter not configured. Add [[unsafe.bindings]] ratelimit to wrangler.toml",
+        }, 500);
+        return;
+    };
+    defer limiter.free();
+
+    // Use a test key - in production, use user ID, API key, etc.
+    const key = ctx.header("X-User-ID") orelse "anonymous";
+    const outcome = limiter.limit(key);
+
+    if (!outcome.success) {
+        ctx.json(.{
+            .api = "Rate Limiting",
+            .success = false,
+            .limited = true,
+            .key = key,
+            .message = "Rate limit exceeded. Try again later.",
+        }, 429);
+        return;
+    }
+
+    ctx.json(.{
+        .api = "Rate Limiting",
+        .success = true,
+        .limited = false,
+        .key = key,
+        .message = "Request allowed within rate limit.",
     }, 200);
 }
 

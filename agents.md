@@ -1397,6 +1397,53 @@ tag = "v1"
 new_classes = ["MyDurableObject"]
 ```
 
+## Rate Limiting
+
+The Rate Limiting API lets you enforce rate limits directly from your Worker. Limits are applied per Cloudflare location for low latency.
+
+```zig
+fn handleRequest(ctx: *FetchContext) void {
+    const limiter = ctx.env.rateLimiter("MY_RATE_LIMITER") orelse {
+        ctx.throw(500, "Rate limiter not configured");
+        return;
+    };
+    defer limiter.free();
+
+    // Use a unique key to identify the actor (user ID, API key, etc.)
+    const user_id = ctx.header("X-User-ID") orelse "anonymous";
+    const outcome = limiter.limit(user_id);
+
+    if (!outcome.success) {
+        ctx.json(.{ .error = "Rate limit exceeded" }, 429);
+        return;
+    }
+
+    ctx.json(.{ .message = "Success!" }, 200);
+}
+```
+
+### Key Selection
+
+| Key Type | Example | Use Case |
+|----------|---------|----------|
+| User ID | `"user:123"` | Per-user limiting |
+| API Key | `"apikey:abc123"` | Per-client limiting |
+| User + Route | `"user:123:/api/expensive"` | Per-endpoint limiting |
+
+Avoid using IP addresses as keys since many users may share an IP.
+
+### Configuration
+
+```toml
+# wrangler.toml
+[[ratelimits]]
+name = "MY_RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 100, period = 60 }
+```
+
+**Period Options:** 10 or 60 seconds only.
+
 ## Workers AI
 
 ```zig

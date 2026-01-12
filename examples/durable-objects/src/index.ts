@@ -478,9 +478,28 @@ class WASMRuntime {
       }
     };
 
+    // Rate Limiting: Call limiter.limit({ key }) and return 1 for success, 0 for failure
+    const jsRateLimiterLimitImpl = async (
+      limiterPtr: HeapPtr,
+      keyPtr: number,
+      keyLen: number
+    ): Promise<number> => {
+      const limiter = self.heap.get(limiterPtr) as { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
+      const key = self.getString(keyPtr, keyLen);
+      
+      try {
+        const result = await limiter.limit({ key });
+        return result.success ? 1 : 0;
+      } catch (err) {
+        console.error('Rate limiter error:', err);
+        return 0; // Fail closed on error
+      }
+    };
+
     return {
       jsAsyncFnCall: new WebAssembly.Suspending(jsAsyncFnCallImpl),
       jsFetch: new WebAssembly.Suspending(jsFetchImpl),
+      js_rate_limiter_limit: new WebAssembly.Suspending(jsRateLimiterLimitImpl),
     };
   }
 

@@ -4,7 +4,7 @@ A Zig library for building Cloudflare Workers with WebAssembly. Write high-perfo
 
 ## Features
 
-- **Cloudflare APIs**: KV, R2, D1, Cache, Queues, Service Bindings, Workers AI, Durable Objects
+- **Cloudflare APIs**: KV, R2, D1, Cache, Queues, Service Bindings, Workers AI, Durable Objects, Rate Limiting
 - **Web Crypto**: Full SubtleCrypto API - digest, encrypt, decrypt, sign, verify, key generation
 - **WebSockets**: Inbound upgrades, outbound connections, hibernation support
 - **Durable Objects**: Full DO support with state, storage, alarms, SQL, location hints
@@ -1669,6 +1669,71 @@ fn handleAI(ctx: *FetchContext) void {
 [ai]
 binding = "AI"
 ```
+
+---
+
+## Rate Limiting
+
+The Rate Limiting API lets you enforce rate limits directly from your Worker. Limits are applied per Cloudflare location for low latency.
+
+```zig
+const workers = @import("cf-workerz");
+
+fn handleRequest(ctx: *workers.FetchContext) void {
+    const limiter = ctx.env.rateLimiter("MY_RATE_LIMITER") orelse {
+        ctx.throw(500, "Rate limiter not configured");
+        return;
+    };
+    defer limiter.free();
+
+    // Use a unique key to identify the actor (user ID, API key, etc.)
+    const user_id = ctx.header("X-User-ID") orelse "anonymous";
+    const outcome = limiter.limit(user_id);
+
+    if (!outcome.success) {
+        ctx.json(.{ .error = "Rate limit exceeded" }, 429);
+        return;
+    }
+
+    ctx.json(.{ .message = "Success!" }, 200);
+}
+```
+
+### Key Selection
+
+Choose keys that uniquely identify the actor you want to rate limit:
+
+| Key Type | Example | Use Case |
+|----------|---------|----------|
+| User ID | `"user:123"` | Per-user limiting |
+| API Key | `"apikey:abc123"` | Per-client limiting |
+| User + Route | `"user:123:/api/expensive"` | Per-endpoint limiting |
+
+**Note:** Avoid using IP addresses as keys since many users may share an IP (e.g., corporate networks, mobile carriers).
+
+### Locality
+
+Rate limits are enforced **per Cloudflare location**. A user hitting your Worker from Sydney has a separate limit from one in London. This design provides:
+- Very low latency (no cross-datacenter coordination)
+- High availability
+- Approximate global limiting (good enough for most use cases)
+
+### Configuration
+
+```toml
+# wrangler.toml
+[[ratelimits]]
+name = "MY_RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 100, period = 60 }
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `name` | Binding name to access in code |
+| `namespace_id` | Unique identifier for this limiter |
+| `limit` | Maximum requests allowed in the period |
+| `period` | Time window in seconds (**10 or 60 only**) |
 
 ---
 

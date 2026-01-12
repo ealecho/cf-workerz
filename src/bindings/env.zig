@@ -60,6 +60,7 @@ const Queue = @import("../apis/queues.zig").Queue;
 const Fetcher = @import("../apis/service.zig").Fetcher;
 const AI = @import("../apis/ai.zig").AI;
 const DurableObjectNamespace = @import("../apis/durable.zig").DurableObjectNamespace;
+const RateLimiter = @import("../apis/rate_limit.zig").RateLimiter;
 
 /// Environment bindings accessor.
 ///
@@ -347,5 +348,43 @@ pub const Env = struct {
         const aiPtr = getObjectValue(self.id, name);
         if (aiPtr <= DefaultValueSize) return null;
         return AI.init(aiPtr);
+    }
+
+    /// Get a Rate Limiter binding from the environment.
+    ///
+    /// Rate Limiters allow you to enforce request limits based on
+    /// custom keys like user IDs, API keys, or request paths.
+    /// Limits are enforced per Cloudflare location.
+    ///
+    /// ## Configuration
+    ///
+    /// ```toml
+    /// [[ratelimits]]
+    /// name = "MY_RATE_LIMITER"
+    /// namespace_id = "1001"
+    /// simple = { limit = 100, period = 60 }
+    /// ```
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const limiter = ctx.env.rateLimiter("MY_RATE_LIMITER") orelse {
+    ///     ctx.throw(500, "Rate limiter not configured");
+    ///     return;
+    /// };
+    /// defer limiter.free();
+    ///
+    /// const user_id = ctx.header("X-User-ID") orelse "anonymous";
+    /// const outcome = limiter.limit(user_id);
+    ///
+    /// if (!outcome.success) {
+    ///     ctx.json(.{ .error = "Rate limit exceeded" }, 429);
+    ///     return;
+    /// }
+    /// ```
+    pub fn rateLimiter(self: *const Env, name: []const u8) ?RateLimiter {
+        const ptr = getObjectValue(self.id, name);
+        if (ptr <= DefaultValueSize) return null;
+        return RateLimiter.init(ptr);
     }
 };

@@ -111,6 +111,11 @@ pub const R2GetResponse = r2.R2GetResponse;
 const service = @import("service.zig");
 pub const Fetcher = service.Fetcher;
 
+// Rate Limiting API
+const rate_limit = @import("rate_limit.zig");
+pub const RateLimiter = rate_limit.RateLimiter;
+pub const RateLimitOutcome = rate_limit.RateLimitOutcome;
+
 // WebSocket API
 const webSocket = @import("webSocket.zig");
 pub const WebSocket = webSocket.WebSocket;

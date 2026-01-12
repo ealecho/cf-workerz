@@ -59,6 +59,14 @@ database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 # [ai]
 # binding = "AI"
 
+# Rate Limiting
+# Run: Create namespace in Cloudflare dashboard
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
+
 # Environment Variables
 # [vars]
 # MY_VAR = "value"
