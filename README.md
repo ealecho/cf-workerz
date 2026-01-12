@@ -2405,6 +2405,7 @@ These features exist in workers-rs but have no implementation in cf-workerz:
 
 | Feature | workers-rs | Priority | Notes |
 |---------|-----------|----------|-------|
+| Workflows | ➖ No | 🔴 Not Planned | Durable multi-step execution; class-based API incompatible with WASM |
 | RPC Support | ✅ Experimental | 🟡 Medium | Worker-to-Worker RPC |
 | Hyperdrive | ✅ | 🟡 Medium | PostgreSQL connection pooling |
 | Vectorize | ✅ | 🟡 Medium | Vector database for AI apps |
@@ -2480,6 +2481,14 @@ Focus: Close the critical feature gaps
 - [x] Rate Limiting API ✅
 - [ ] Browser Rendering API
 - [ ] Email Workers support
+
+### Not Planned
+
+These features are not planned for cf-workerz due to architectural incompatibility with WASM:
+
+| Feature | Reason |
+|---------|--------|
+| **Workflows** | Requires class-based inheritance (`extends WorkflowEntrypoint`) incompatible with WASM. Even workers-rs doesn't support it. Use Durable Objects for durable execution needs. |
 
 ### v1.0.0 (Stable)
 
