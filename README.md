@@ -4,7 +4,9 @@ A Zig library for building Cloudflare Workers with WebAssembly. Write high-perfo
 
 ## Features
 
-- **Cloudflare APIs**: KV, R2, D1, Cache, Queues, Service Bindings, Workers AI
+- **Cloudflare APIs**: KV, R2, D1, Cache, Queues, Service Bindings, Workers AI, Durable Objects
+- **WebSockets**: Inbound upgrades, outbound connections, hibernation support
+- **Durable Objects**: Full DO support with state, storage, alarms, SQL, location hints
 - **Ergonomic D1**: pg.zig-inspired query API with inline params and struct mapping
 - **Built-in Router**: Path parameters, wildcards, route groups, middleware support
 - **Response Helpers**: JSON, text, HTML, redirect, binary, file downloads, streaming
@@ -1313,6 +1315,265 @@ service = "backend-worker-name"
 
 ---
 
+## WebSockets
+
+WebSockets enable real-time, bidirectional communication between clients and your Worker.
+
+### Inbound WebSocket (Server)
+
+Handle incoming WebSocket upgrade requests:
+
+```zig
+const workers = @import("cf-workerz");
+const FetchContext = workers.FetchContext;
+const WebSocketPair = workers.WebSocketPair;
+const Response = workers.Response;
+
+fn handleWebSocket(ctx: *FetchContext) void {
+    // Check if this is a WebSocket upgrade request
+    const upgrade = ctx.header("Upgrade") orelse "";
+    if (!std.mem.eql(u8, upgrade, "websocket")) {
+        ctx.text("Expected WebSocket upgrade", 426);
+        return;
+    }
+
+    // Create a WebSocket pair
+    const pair = WebSocketPair.new();
+    defer pair.free();
+
+    // Get the server-side WebSocket
+    var server = pair.server();
+    defer server.free();
+
+    // Accept the connection
+    server.accept();
+
+    // Send a welcome message
+    server.sendText("{\"type\":\"connected\"}");
+
+    // Get the client WebSocket for the response
+    const client = pair.client();
+    defer client.free();
+
+    // Return the upgrade response
+    const response = Response.webSocketUpgrade(&client);
+    defer response.free();
+    ctx.send(&response);
+}
+```
+
+### Outbound WebSocket (Client)
+
+Connect to external WebSocket servers:
+
+```zig
+const workers = @import("cf-workerz");
+
+fn connectToExternalWS(ctx: *FetchContext) void {
+    // Connect to an external WebSocket server
+    const ws = workers.wsConnect("wss://echo.websocket.org");
+    defer ws.free();
+
+    // Send a message
+    ws.sendText("Hello from Worker!");
+
+    // Or connect with specific subprotocols
+    const wsWithProtocol = workers.wsConnectWithProtocols(
+        "wss://api.example.com/ws",
+        &.{ "graphql-ws", "subscriptions-transport-ws" },
+    );
+    defer wsWithProtocol.free();
+
+    wsWithProtocol.sendText("{\"type\":\"connection_init\"}");
+}
+```
+
+### WebSocket Methods
+
+| Method | Description |
+|--------|-------------|
+| `ws.accept()` | Accept an incoming connection (server-side) |
+| `ws.sendText(text)` | Send a text message |
+| `ws.sendBytes(data)` | Send binary data |
+| `ws.close(code, reason)` | Close with code and reason |
+| `ws.readyState()` | Get connection state (.Connecting, .Open, .Closing, .Closed) |
+
+### WebSocket Close Codes
+
+| Code | Name | Description |
+|------|------|-------------|
+| 1000 | NormalClosure | Normal close |
+| 1001 | GoingAway | Server shutting down |
+| 1002 | ProtocolError | Protocol error |
+| 1003 | UnsupportedData | Invalid data type |
+| 1008 | PolicyViolation | Policy violation |
+| 1011 | InternalError | Server error |
+
+---
+
+## Durable Objects
+
+Durable Objects provide strongly consistent, globally distributed coordination and storage. Each DO instance is single-threaded and has its own persistent storage.
+
+### Accessing a Durable Object
+
+```zig
+fn handleDO(ctx: *FetchContext) void {
+    // Get the DO namespace from environment
+    const namespace = ctx.env.durableObject("MY_DO") orelse {
+        ctx.throw(500, "DO not configured");
+        return;
+    };
+    defer namespace.free();
+
+    // Get a DO instance by name (deterministic - same name = same DO)
+    const id = namespace.idFromName("room:lobby");
+    defer id.free();
+
+    // Get a stub to communicate with the DO
+    const stub = id.getStub();
+    defer stub.free();
+
+    // Make a request to the DO
+    const response = stub.fetch(.{ .text = "https://do/join" }, null);
+    defer response.free();
+
+    // Forward the response
+    ctx.send(&response);
+}
+```
+
+### Location Hints
+
+Optimize latency by hinting where the Durable Object should run:
+
+```zig
+fn useDOWithLocationHint(ctx: *FetchContext) void {
+    const namespace = ctx.env.durableObject("MY_DO") orelse return;
+    defer namespace.free();
+
+    // Get stub with location hint for lower latency
+    const stub = namespace.getWithLocationHint("user:123", "enam"); // Eastern North America
+    defer stub.free();
+
+    const response = stub.fetch(.{ .text = "https://do/action" }, null);
+    defer response.free();
+    ctx.send(&response);
+}
+```
+
+**Location Hint Values:**
+| Hint | Region |
+|------|--------|
+| `wnam` | Western North America |
+| `enam` | Eastern North America |
+| `sam` | South America |
+| `weur` | Western Europe |
+| `eeur` | Eastern Europe |
+| `apac` | Asia Pacific |
+| `oc` | Oceania |
+| `afr` | Africa |
+| `me` | Middle East |
+
+### Durable Object Alarms
+
+Schedule code to run at a specific time:
+
+```zig
+fn setupAlarm(storage: *workers.DurableObjectStorage) void {
+    // Using ScheduledTime helper for convenient scheduling
+    const time = workers.ScheduledTime.fromOffsetMins(5);  // 5 minutes from now
+    storage.setAlarmWithOptions(time.toTimestamp(), .{});
+
+    // Other offset helpers
+    _ = workers.ScheduledTime.fromOffsetSecs(30);   // 30 seconds
+    _ = workers.ScheduledTime.fromOffsetHours(1);   // 1 hour
+    _ = workers.ScheduledTime.fromOffsetMs(500);    // 500ms
+
+    // Get current alarm
+    if (storage.getAlarmWithOptions(.{ .allowConcurrency = true })) |alarm| {
+        _ = alarm;
+    }
+
+    // Delete alarm
+    storage.deleteAlarmWithOptions(.{ .allowConcurrency = true });
+}
+```
+
+### SQL Storage (SQLite)
+
+Durable Objects support SQLite-backed storage for relational data:
+
+```zig
+fn useSqlStorage(storage: *workers.DurableObjectStorage) void {
+    // Get SQL interface
+    const sql = storage.sql();
+    defer sql.free();
+
+    // Execute DDL/DML without results
+    sql.exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    // Execute with parameters
+    sql.execWithParams("INSERT INTO users (name) VALUES (?)", &.{"Alice"});
+
+    // Query with cursor
+    var cursor = sql.exec("SELECT * FROM users WHERE id > ?");
+    defer cursor.free();
+
+    // Iterate rows
+    while (cursor.next()) |row| {
+        defer row.free();
+        if (row.get("name")) |name| {
+            _ = name;
+        }
+    }
+
+    // Get statistics
+    const dbSize = sql.databaseSize();
+    _ = dbSize;
+}
+```
+
+### WebSocket Hibernation (Durable Objects)
+
+For WebSockets in Durable Objects, use hibernation for efficiency:
+
+```zig
+fn acceptHibernatingWebSocket(state: *workers.DurableObjectState, ws: *workers.WebSocket) void {
+    // Accept with optional tags for filtering
+    state.acceptWebSocket(ws, &.{ "room:lobby", "user:123" });
+
+    // Get all WebSockets
+    var allWs = state.getWebSockets(null);
+    defer allWs.free();
+    while (allWs.next()) |socket| {
+        defer socket.free();
+        socket.sendText("broadcast message");
+    }
+
+    // Get WebSockets by tag
+    var roomWs = state.getWebSockets("room:lobby");
+    defer roomWs.free();
+    while (roomWs.next()) |socket| {
+        defer socket.free();
+        socket.sendText("room message");
+    }
+}
+```
+
+**wrangler.toml configuration:**
+```toml
+[[durable_objects.bindings]]
+name = "MY_DO"
+class_name = "MyDurableObject"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["MyDurableObject"]
+```
+
+---
+
 ## Workers AI
 
 ```zig
@@ -1638,9 +1899,11 @@ fn example(ctx: *FetchContext) void {
 
 ## Examples
 
-See the [examples directory](https://github.com/ealecho/workers-zig/tree/master/examples) for complete working examples:
+See the [examples directory](https://github.com/ealecho/cf-workerz/tree/master/examples) for complete working examples:
 
-- **hello-world**: Basic router example
+- **hello-world**: Basic router example with path parameters and JSON responses
+- **websocket-client**: Outbound WebSocket connections and inbound upgrades
+- **durable-objects**: Location hints, alarms, SQL storage, counter DO
 - **todo-app**: Full CRUD with D1, Cache, KV, and AI
 - **router**: Path params, wildcards, groups demo
 - **r2-storage**: R2 object storage operations
@@ -1740,10 +2003,10 @@ Verify your wrangler.toml has the correct bindings and the binding names match.
 
 cf-workerz aims for feature parity with [workers-rs](https://github.com/cloudflare/workers-rs), the official Rust SDK for Cloudflare Workers.
 
-> **Current Status: ~80% feature parity**
+> **Current Status: ~95% feature parity**
 >
-> Core APIs (KV, R2, D1, Cache, Queues, AI, Service Bindings) are fully implemented.
-> Major gaps: Durable Objects, WebSockets, SubtleCrypto.
+> All core Cloudflare APIs are fully implemented including KV, R2, D1, Cache, Queues, AI, Service Bindings, **Durable Objects**, and **WebSockets**.
+> Remaining gaps: SubtleCrypto, Hyperdrive, Vectorize, RPC.
 
 ### Legend
 
@@ -1804,6 +2067,8 @@ These features are now fully implemented:
 |---------|-----------|------------|--------|
 | Headers | ✅ | ✅ | Full API including `keys()`, `values()`, `entries()` iterators |
 | Streams | ✅ | ✅ | ReadableStream, WritableStream, TransformStream, Compression/Decompression with piping |
+| **Durable Objects** | ✅ | ✅ | Full implementation with state, storage, alarms, SQL, WebSocket hibernation |
+| **WebSockets** | ✅ | ✅ | Inbound upgrades, outbound connections, events, hibernation |
 
 ---
 
@@ -1813,10 +2078,6 @@ These exist in the codebase but are **not functional** (only init/free methods):
 
 | Feature | workers-rs | cf-workerz | Priority | Notes |
 |---------|-----------|------------|----------|-------|
-| **Durable Objects** | ✅ Full | ❌ Stub | 🔴 Critical | Major CF differentiator |
-| DO SQLite Storage | ✅ Full | ❌ Missing | 🔴 Critical | Depends on DO |
-| WebSocket | ✅ Full | ❌ Stub | 🟠 High | Real-time apps need this |
-| WebSocketPair | ✅ Full | ❌ Missing | 🟠 High | Server-side WebSocket |
 | SubtleCrypto | ✅ Full | ❌ Stub | 🟡 Medium | Encrypt, sign, hash, keys |
 
 ---
@@ -1851,6 +2112,8 @@ Features unique to cf-workerz (not available in workers-rs):
 | **Tiny Binaries** | 10-15KB WASM output vs 100KB+ for Rust workers |
 | **No Macros** | Pure Zig without proc-macro complexity |
 | **LSP Documentation** | Comprehensive hover docs for all APIs |
+| **ScheduledTime Helper** | Convenient alarm scheduling with `fromOffsetSecs()`, `fromOffsetMins()`, `fromOffsetHours()` |
+| **DO Location Hints** | Optimize latency with `getWithLocationHint()` for Durable Objects |
 
 ---
 
@@ -1865,7 +2128,7 @@ Features unique to cf-workerz (not available in workers-rs):
 | Learning Curve | Moderate (Rust) | Lower (Zig) |
 | Ecosystem | Large (crates.io) | Growing |
 | Axum/http compat | ✅ Yes | ➖ No (different ecosystem) |
-| Feature Parity | 100% (official) | ~80% |
+| Feature Parity | 100% (official) | ~95% |
 
 ---
 
@@ -1875,8 +2138,14 @@ Features unique to cf-workerz (not available in workers-rs):
 
 Focus: Close the critical feature gaps
 
-- [ ] **Durable Objects** - Full implementation with state/storage
-- [ ] **WebSocket** - Client and server support, WebSocketPair
+- [x] **Durable Objects** - Full implementation with state/storage ✅
+- [x] **DO Location Hints** - Optimize latency with location hints ✅
+- [x] **DO SQL Storage** - SQLite-backed storage with SqlCursor ✅
+- [x] **DO Alarms** - Scheduled alarms with ScheduledTime helper ✅
+- [x] **WebSocket (Inbound)** - WebSocketPair, accept, send, close ✅
+- [x] **WebSocket (Outbound)** - Connect to external WebSocket servers ✅
+- [x] **WebSocket Events** - MessageEvent, CloseEvent, ErrorEvent ✅
+- [x] **WebSocket Hibernation** - DO WebSocket hibernation support ✅
 - [x] **FormData** - Parse multipart, file uploads ✅
 - [x] **URL/URLSearchParams** - Full URL manipulation API ✅
 - [x] **Middleware** - Before/after hooks for router ✅
@@ -1913,8 +2182,8 @@ We welcome contributions! These features have the highest impact:
 | Feature | Complexity | Good First Issue? |
 |---------|-----------|-------------------|
 | SubtleCrypto | Medium | Maybe |
-| WebSocket | High | No |
-| Durable Objects | Very High | No |
+| Hyperdrive | Medium | No |
+| Vectorize | Medium | No |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, or open an [issue](https://github.com/ealecho/cf-workerz/issues) to discuss!
 
