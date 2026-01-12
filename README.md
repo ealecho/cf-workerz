@@ -5,6 +5,7 @@ A Zig library for building Cloudflare Workers with WebAssembly. Write high-perfo
 ## Features
 
 - **Cloudflare APIs**: KV, R2, D1, Cache, Queues, Service Bindings, Workers AI, Durable Objects
+- **Web Crypto**: Full SubtleCrypto API - digest, encrypt, decrypt, sign, verify, key generation
 - **WebSockets**: Inbound upgrades, outbound connections, hibernation support
 - **Durable Objects**: Full DO support with state, storage, alarms, SQL, location hints
 - **Ergonomic D1**: pg.zig-inspired query API with inline params and struct mapping
@@ -2274,8 +2275,8 @@ cf-workerz aims for feature parity with [workers-rs](https://github.com/cloudfla
 
 > **Current Status: ~95% feature parity**
 >
-> All core Cloudflare APIs are fully implemented including KV, R2, D1, Cache, Queues, AI, Service Bindings, **Durable Objects**, and **WebSockets**.
-> Remaining gaps: SubtleCrypto, Hyperdrive, Vectorize, RPC.
+> All core Cloudflare APIs are fully implemented including KV, R2, D1, Cache, Queues, AI, Service Bindings, **Durable Objects**, **WebSockets**, and **SubtleCrypto**.
+> Remaining gaps: Hyperdrive, Vectorize, RPC.
 
 ### Legend
 
@@ -2319,6 +2320,7 @@ These features are complete and production-ready:
 | CF Properties | ✅ | ✅ | Geo, colo, ASN, bot score, etc. |
 | crypto.randomUUID | ✅ | ✅ | Generate UUIDs |
 | crypto.getRandomValues | ✅ | ✅ | Cryptographic random bytes |
+| **SubtleCrypto** | ✅ | ✅ | digest, encrypt, decrypt, sign, verify, generateKey, importKey, exportKey, deriveKey, deriveBits, wrapKey, unwrapKey |
 | Execution Context | ✅ | ✅ | waitUntil, passThroughOnException |
 | **Web APIs** | | | |
 | URL | ✅ | ✅ | Parsing, properties, setters, searchParams |
@@ -2338,16 +2340,7 @@ These features are now fully implemented:
 | Streams | ✅ | ✅ | ReadableStream, WritableStream, TransformStream, Compression/Decompression with piping |
 | **Durable Objects** | ✅ | ✅ | Full implementation with state, storage, alarms, SQL, WebSocket hibernation |
 | **WebSockets** | ✅ | ✅ | Inbound upgrades, outbound connections, events, hibernation |
-
----
-
-### Stub Only (❌)
-
-These exist in the codebase but are **not functional** (only init/free methods):
-
-| Feature | workers-rs | cf-workerz | Priority | Notes |
-|---------|-----------|------------|----------|-------|
-| SubtleCrypto | ✅ Full | ❌ Stub | 🟡 Medium | Encrypt, sign, hash, keys |
+| **SubtleCrypto** | ✅ | ✅ | Full Web Crypto API: digest, encrypt, decrypt, sign, verify, key generation, import/export, derivation, wrapping + convenience hashes (`sha256()`, `sha1()`, etc.) |
 
 ---
 
@@ -2383,6 +2376,7 @@ Features unique to cf-workerz (not available in workers-rs):
 | **LSP Documentation** | Comprehensive hover docs for all APIs |
 | **ScheduledTime Helper** | Convenient alarm scheduling with `fromOffsetSecs()`, `fromOffsetMins()`, `fromOffsetHours()` |
 | **DO Location Hints** | Optimize latency with `getWithLocationHint()` for Durable Objects |
+| **Convenience Hash Functions** | One-liner `sha256()`, `sha1()`, `sha512()`, `md5()` functions |
 
 ---
 
@@ -2419,7 +2413,7 @@ Focus: Close the critical feature gaps
 - [x] **URL/URLSearchParams** - Full URL manipulation API ✅
 - [x] **Middleware** - Before/after hooks for router ✅
 - [x] **Headers Iteration** - keys(), values(), entries() iterators ✅
-- [ ] **SubtleCrypto** - Encrypt, decrypt, sign, verify, hash
+- [x] **SubtleCrypto** - Encrypt, decrypt, sign, verify, hash ✅
 
 ### v0.3.0 - Extended APIs
 
@@ -2450,9 +2444,9 @@ We welcome contributions! These features have the highest impact:
 
 | Feature | Complexity | Good First Issue? |
 |---------|-----------|-------------------|
-| SubtleCrypto | Medium | Maybe |
 | Hyperdrive | Medium | No |
 | Vectorize | Medium | No |
+| RPC Support | High | No |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, or open an [issue](https://github.com/ealecho/cf-workerz/issues) to discuss!
 
