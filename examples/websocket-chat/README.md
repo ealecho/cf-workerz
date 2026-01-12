@@ -48,6 +48,44 @@ npm run dev
 npm run deploy
 ```
 
+## Production Deployment
+
+Deploy both the worker and client to Cloudflare:
+
+### 1. Deploy the Worker
+
+```bash
+cd examples/websocket-chat
+npm install
+npx wrangler deploy
+```
+
+This deploys to `https://websocket-chat.<your-subdomain>.workers.dev`
+
+### 2. Deploy the React Client
+
+```bash
+cd examples/websocket-chat/client
+npm install
+
+# Create the Pages project (first time only)
+npx wrangler pages project create websocket-chat-client --production-branch main
+
+# Set the production WebSocket URL
+echo "VITE_WS_URL=wss://websocket-chat.<your-subdomain>.workers.dev/ws" > .env.production
+
+# Build and deploy
+npm run build
+npx wrangler pages deploy ./dist --project-name websocket-chat-client --branch main
+```
+
+This deploys to `https://websocket-chat-client.pages.dev`
+
+### Live Demo
+
+- **Client**: https://websocket-chat-client.pages.dev
+- **Worker API**: https://websocket-chat.alaara.workers.dev
+
 ## WebSocket Protocol
 
 ### Connect

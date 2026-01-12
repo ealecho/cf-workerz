@@ -20,6 +20,39 @@ const workers = @import("cf-workerz");
 
 const FetchContext = workers.FetchContext;
 const Route = workers.Router;
+const Middleware = workers.Middleware;
+
+// ============================================================================
+// CORS Middleware
+// ============================================================================
+
+/// CORS middleware - handles preflight OPTIONS requests and adds CORS headers.
+/// Required for cross-origin requests from the React client on Cloudflare Pages.
+fn corsMiddleware(ctx: *FetchContext) bool {
+    // Handle preflight OPTIONS requests
+    if (ctx.method() == .Options) {
+        const headers = workers.Headers.new();
+        defer headers.free();
+        headers.setText("Access-Control-Allow-Origin", "*");
+        headers.setText("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        headers.setText("Access-Control-Allow-Headers", "Content-Type, Authorization, Upgrade, Connection");
+        headers.setText("Access-Control-Max-Age", "86400");
+
+        const res = workers.Response.new(
+            .{ .none = {} },
+            .{ .status = 204, .statusText = "No Content", .headers = &headers },
+        );
+        defer res.free();
+        ctx.send(&res);
+        return false; // Stop chain, request handled
+    }
+    return true; // Continue to next middleware/handler
+}
+
+const middleware = Middleware{
+    .before = &.{corsMiddleware},
+    .after = &.{},
+};
 
 // ============================================================================
 // Route Table
@@ -144,5 +177,5 @@ fn handlePostMessage(ctx: *FetchContext) void {
 
 export fn handleFetch(ctx_id: u32) void {
     const ctx = FetchContext.init(ctx_id) catch return;
-    Route.dispatch(routes, ctx);
+    Route.dispatchWithMiddleware(routes, ctx, middleware);
 }

@@ -77,6 +77,16 @@ const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 
 // ============================================================================
+// CORS Headers Helper
+// ============================================================================
+
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+// ============================================================================
 // ChatRoom Durable Object
 // ============================================================================
 
@@ -223,7 +233,7 @@ export class ChatRoom implements DurableObject {
       messages: history,
       count: history.length,
     }), {
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
     });
   }
 
@@ -234,7 +244,7 @@ export class ChatRoom implements DurableObject {
       if (!data.userId || !data.content) {
         return new Response(JSON.stringify({ error: 'Missing userId or content' }), {
           status: 400,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
         });
       }
 
@@ -259,12 +269,12 @@ export class ChatRoom implements DurableObject {
         message,
         connectedClients: this.sessions.size,
       }), {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
     } catch (error) {
       return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
         status: 400,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
     }
   }
