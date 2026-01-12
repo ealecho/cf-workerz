@@ -646,6 +646,54 @@ fn handleGetUser(ctx: *FetchContext) void {
 | `/files/*path` | `/files/a/b/c` | `path = "a/b/c"` |
 | `/files/*` | `/files/readme.txt` | `* = "readme.txt"` |
 
+### Query Parameters
+
+Access query string parameters using `ctx.query()`:
+
+```zig
+fn handleSearch(ctx: *FetchContext) void {
+    // GET /search?q=zig&limit=10&debug=true
+    const params = ctx.query();
+    defer params.free();
+    
+    // Get parameter values
+    const q = params.get("q") orelse "";           // "zig"
+    const limit = params.get("limit") orelse "20"; // "10"
+    
+    // Check if parameter exists
+    if (params.has("debug")) {
+        // debug mode enabled
+    }
+    
+    // Count parameters
+    const count = params.size(); // 3
+    
+    ctx.json(.{ .query = q, .limit = limit, .count = count }, 200);
+}
+```
+
+### URL Access
+
+Access the full parsed URL using `ctx.url()`:
+
+```zig
+fn handleRequest(ctx: *FetchContext) void {
+    // Get parsed URL object
+    const url = ctx.url();
+    defer url.free();
+    
+    // Access URL components
+    const host = url.hostname();   // "api.example.com"
+    const proto = url.protocol();  // "https:"
+    const path = url.pathname();   // "/api/v1/users"
+    const search = url.search();   // "?page=1&limit=10"
+    const port = url.port();       // "8080" or ""
+    const origin = url.origin();   // "https://api.example.com:8080"
+    
+    ctx.json(.{ .host = host, .path = path }, 200);
+}
+```
+
 ### Response Helpers
 
 The library provides Hono-style response helpers with `ctx.json()` supporting automatic JSON serialization:
