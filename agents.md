@@ -957,6 +957,103 @@ fn websocketOperations(ws: *workers.WebSocket) void {
 | 1008 | PolicyViolation | Policy violation |
 | 1011 | InternalError | Server error |
 
+### Outbound WebSocket Connections
+
+Connect to external WebSocket servers from your Worker:
+
+```zig
+const workers = @import("cf-workerz");
+
+fn connectToExternalWS(ctx: *FetchContext) void {
+    // Connect to an external WebSocket server
+    const ws = workers.wsConnect("wss://echo.websocket.org");
+    defer ws.free();
+
+    // Send a message
+    ws.sendText("Hello from Worker!");
+
+    // Or connect with specific subprotocols
+    const wsWithProtocol = workers.wsConnectWithProtocols(
+        "wss://api.example.com/ws",
+        &.{ "graphql-ws", "subscriptions-transport-ws" },
+    );
+    defer wsWithProtocol.free();
+
+    wsWithProtocol.sendText("{\"type\":\"connection_init\"}");
+}
+```
+
+### WebSocket Event Types
+
+Handle different types of WebSocket events:
+
+```zig
+const workers = @import("cf-workerz");
+
+// Incoming message can be text or binary
+fn handleIncomingMessage(msg: workers.WebSocketIncomingMessage) void {
+    switch (msg) {
+        .text => |text| {
+            // Handle text message
+            _ = text;
+        },
+        .binary => |bytes| {
+            // Handle binary data
+            _ = bytes;
+        },
+    }
+}
+
+// Message event with metadata
+fn handleMessageEvent(event: workers.MessageEvent) void {
+    defer event.free();
+
+    // Get as text
+    if (event.text()) |text| {
+        _ = text;
+    }
+
+    // Get as bytes
+    const bytes = event.bytes();
+    _ = bytes;
+
+    // Get origin
+    const origin = event.origin();
+    _ = origin;
+}
+
+// Close event
+fn handleCloseEvent(event: workers.CloseEvent) void {
+    defer event.free();
+
+    const code = event.code();      // e.g., 1000
+    const reason = event.reason();  // e.g., "Normal closure"
+    const clean = event.wasClean(); // true if clean close
+    _ = code;
+    _ = reason;
+    _ = clean;
+}
+
+// Error event
+fn handleErrorEvent(event: workers.ErrorEvent) void {
+    defer event.free();
+
+    const msg = event.message();
+    const errType = event.errorType();
+    _ = msg;
+    _ = errType;
+}
+
+// Combined WebSocket event union
+fn handleWebSocketEvent(event: workers.WebSocketEvent) void {
+    switch (event) {
+        .message => |msg| handleMessageEvent(msg),
+        .close => |close| handleCloseEvent(close),
+        .error => |err| handleErrorEvent(err),
+    }
+}
+```
+
 ### Configuration
 
 No special wrangler.toml configuration needed for basic WebSockets.
@@ -1019,6 +1116,46 @@ fn createDOIds(namespace: *workers.DurableObjectNamespace) void {
     _ = idString;
 }
 ```
+
+### Location Hints
+
+Optimize latency by hinting where the Durable Object should run:
+
+```zig
+fn useDOWithLocationHint(ctx: *FetchContext) void {
+    const namespace = ctx.env.durableObject("MY_DO") orelse return;
+    defer namespace.free();
+
+    // Get stub with location hint for lower latency
+    // Hint suggests where the DO should be created (not guaranteed)
+    const stub = namespace.getWithLocationHint("user:123", "enam"); // Eastern North America
+    defer stub.free();
+
+    // Or get stub for an existing ID with location hint
+    const id = namespace.idFromName("room:lobby");
+    defer id.free();
+
+    const stubById = namespace.getStubForId(&id, "weur"); // Western Europe
+    defer stubById.free();
+
+    const response = stub.fetch(.{ .text = "https://do/action" }, null);
+    defer response.free();
+    ctx.send(&response);
+}
+```
+
+**Location Hint Values:**
+| Hint | Region |
+|------|--------|
+| `wnam` | Western North America |
+| `enam` | Eastern North America |
+| `sam` | South America |
+| `weur` | Western Europe |
+| `eeur` | Eastern Europe |
+| `apac` | Asia Pacific |
+| `oc` | Oceania |
+| `afr` | Africa |
+| `me` | Middle East |
 
 ### Sending Requests to a Durable Object
 
@@ -1110,6 +1247,41 @@ fn setupAlarm(state: *workers.DurableObjectState) void {
 }
 ```
 
+### ScheduledTime Helper
+
+Use the `ScheduledTime` helper for more convenient alarm scheduling:
+
+```zig
+fn setupAlarmWithHelper(storage: *workers.DurableObjectStorage) void {
+    // Using absolute timestamp
+    const time1 = workers.ScheduledTime.fromTimestamp(1704067200000);
+    storage.setAlarmWithOptions(time1.toTimestamp(), .{});
+
+    // Using offsets from now (more convenient)
+    const time2 = workers.ScheduledTime.fromOffsetSecs(30);   // 30 seconds from now
+    const time3 = workers.ScheduledTime.fromOffsetMins(5);    // 5 minutes from now
+    const time4 = workers.ScheduledTime.fromOffsetHours(1);   // 1 hour from now
+    const time5 = workers.ScheduledTime.fromOffsetMs(500);    // 500ms from now
+
+    // Set with options
+    storage.setAlarmWithOptions(time2.toTimestamp(), .{
+        .allowConcurrency = true,   // Allow alarm during request
+        .allowUnconfirmed = false,  // Wait for confirmation
+    });
+
+    // Get alarm with options
+    if (storage.getAlarmWithOptions(.{ .allowConcurrency = true })) |alarm| {
+        _ = alarm;
+    }
+
+    // Delete with options
+    storage.deleteAlarmWithOptions(.{ .allowConcurrency = true });
+    _ = time3;
+    _ = time4;
+    _ = time5;
+}
+```
+
 ### WebSocket Hibernation (Durable Objects)
 
 For WebSockets in Durable Objects, use hibernation for efficiency:
@@ -1148,6 +1320,62 @@ fn attachData(ws: *workers.WebSocket) void {
         defer attachment.free();
         _ = attachment.get("userId");
     }
+}
+```
+
+### SQL Storage (SQLite)
+
+Durable Objects support SQLite-backed storage for relational data:
+
+```zig
+fn useSqlStorage(state: *workers.DurableObjectState) void {
+    const storage = state.storage();
+    defer storage.free();
+
+    // Get SQL interface
+    const sql = storage.sql();
+    defer sql.free();
+
+    // Execute DDL/DML without results
+    sql.exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    // Execute with parameters
+    sql.execWithParams("INSERT INTO users (name) VALUES (?)", &.{"Alice"});
+
+    // Query with cursor
+    var cursor = sql.exec("SELECT * FROM users WHERE id > ?");
+    defer cursor.free();
+
+    // Get column names
+    const columns = cursor.columnNames();
+    _ = columns;
+
+    // Iterate rows
+    while (cursor.next()) |row| {
+        // row is a JSON object with column values
+        defer row.free();
+        if (row.get("name")) |name| {
+            _ = name;
+        }
+    }
+
+    // Get single row
+    if (cursor.one()) |row| {
+        defer row.free();
+        // use row
+    }
+
+    // Get all rows as array
+    const allRows = cursor.toArray();
+    defer allRows.free();
+
+    // Get statistics
+    const dbSize = sql.databaseSize();
+    const rowsRead = cursor.rowsRead();
+    const rowsWritten = cursor.rowsWritten();
+    _ = dbSize;
+    _ = rowsRead;
+    _ = rowsWritten;
 }
 ```
 

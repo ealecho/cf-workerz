@@ -51,6 +51,11 @@ pub const StorageListOptions = durable.StorageListOptions;
 pub const StorageListResult = durable.StorageListResult;
 pub const UniqueIdOptions = durable.UniqueIdOptions;
 pub const WebSocketIterator = durable.WebSocketIterator;
+pub const GetAlarmOptions = durable.GetAlarmOptions;
+pub const SetAlarmOptions = durable.SetAlarmOptions;
+pub const ScheduledTime = durable.ScheduledTime;
+pub const SqlStorage = durable.SqlStorage;
+pub const SqlCursor = durable.SqlCursor;
 
 // Fetch API
 const fetch_api = @import("fetch.zig");
@@ -103,3 +108,10 @@ pub const WebSocket = webSocket.WebSocket;
 pub const WebSocketPair = webSocket.WebSocketPair;
 pub const WebSocketReadyState = webSocket.ReadyState;
 pub const WebSocketCloseCode = webSocket.CloseCode;
+pub const WebSocketIncomingMessage = webSocket.WebSocketIncomingMessage;
+pub const MessageEvent = webSocket.MessageEvent;
+pub const CloseEvent = webSocket.CloseEvent;
+pub const ErrorEvent = webSocket.ErrorEvent;
+pub const WebSocketEvent = webSocket.WebSocketEvent;
+pub const wsConnect = webSocket.connect;
+pub const wsConnectWithProtocols = webSocket.connectWithProtocols;

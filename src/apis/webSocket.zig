@@ -65,6 +65,9 @@ const Array = @import("../bindings/array.zig").Array;
 const ArrayBuffer = @import("../bindings/arraybuffer.zig").ArrayBuffer;
 const Function = @import("../bindings/function.zig").Function;
 const AsyncFunction = @import("../bindings/function.zig").AsyncFunction;
+const Headers = @import("../bindings/headers.zig").Headers;
+const Response = @import("../bindings/response.zig").Response;
+const fetch_api = @import("fetch.zig");
 
 /// WebSocket ready states.
 ///
@@ -523,6 +526,278 @@ pub const WebSocketPair = struct {
 };
 
 // ============================================================================
+// WebSocket Connect (Outbound Connections)
+// ============================================================================
+
+/// Connect to an external WebSocket server.
+///
+/// Establishes an outbound WebSocket connection by sending an HTTP request
+/// with the `Upgrade: websocket` header. The server must respond with a
+/// 101 Switching Protocols response.
+///
+/// ## Parameters
+///
+/// - `url`: The WebSocket URL to connect to. Can use `ws://` or `wss://` scheme,
+///          which will be converted to `http://` or `https://` respectively.
+///
+/// ## Returns
+///
+/// A connected `WebSocket` on success, or `null` if the connection failed.
+///
+/// ## Example
+///
+/// ```zig
+/// const ws = WebSocket.connect("wss://echo.websocket.org") orelse {
+///     ctx.throw(502, "Failed to connect to WebSocket server");
+///     return;
+/// };
+/// defer ws.free();
+///
+/// ws.accept();
+/// ws.sendText("Hello, server!");
+/// ```
+pub fn connect(url: []const u8) ?WebSocket {
+    return connectWithProtocols(url, null);
+}
+
+/// Connect to an external WebSocket server with subprotocol negotiation.
+///
+/// ## Parameters
+///
+/// - `url`: The WebSocket URL to connect to.
+/// - `protocols`: Optional array of subprotocols to negotiate.
+///
+/// ## Example
+///
+/// ```zig
+/// const protocols = [_][]const u8{ "graphql-ws", "subscriptions-transport-ws" };
+/// const ws = WebSocket.connectWithProtocols("wss://api.example.com/graphql", &protocols) orelse {
+///     ctx.throw(502, "Failed to connect");
+///     return;
+/// };
+/// defer ws.free();
+/// ```
+pub fn connectWithProtocols(url: []const u8, protocols: ?[]const []const u8) ?WebSocket {
+    // Convert ws:// to http:// and wss:// to https://
+    var httpUrl: []const u8 = url;
+    var urlBuffer: [2048]u8 = undefined;
+
+    if (std.mem.startsWith(u8, url, "ws://")) {
+        const remaining = url[5..];
+        const httpPrefix = "http://";
+        @memcpy(urlBuffer[0..httpPrefix.len], httpPrefix);
+        @memcpy(urlBuffer[httpPrefix.len .. httpPrefix.len + remaining.len], remaining);
+        httpUrl = urlBuffer[0 .. httpPrefix.len + remaining.len];
+    } else if (std.mem.startsWith(u8, url, "wss://")) {
+        const remaining = url[6..];
+        const httpsPrefix = "https://";
+        @memcpy(urlBuffer[0..httpsPrefix.len], httpsPrefix);
+        @memcpy(urlBuffer[httpsPrefix.len .. httpsPrefix.len + remaining.len], remaining);
+        httpUrl = urlBuffer[0 .. httpsPrefix.len + remaining.len];
+    }
+
+    // Create headers with Upgrade: websocket
+    const headers = Headers.new();
+    defer headers.free();
+    headers.setText("Upgrade", "websocket");
+
+    // Add Sec-WebSocket-Protocol if protocols provided
+    if (protocols) |protos| {
+        if (protos.len > 0) {
+            // Build comma-separated protocol string
+            var protocolBuf: [1024]u8 = undefined;
+            var pos: usize = 0;
+            for (protos, 0..) |proto, i| {
+                if (i > 0) {
+                    protocolBuf[pos] = ',';
+                    pos += 1;
+                }
+                @memcpy(protocolBuf[pos .. pos + proto.len], proto);
+                pos += proto.len;
+            }
+            headers.setText("Sec-WebSocket-Protocol", protocolBuf[0..pos]);
+        }
+    }
+
+    // Perform fetch with upgrade headers
+    const response = fetch_api.fetch(.{ .text = httpUrl }, .{
+        .requestInit = .{
+            .headers = headers,
+        },
+    });
+    defer response.free();
+
+    // Get WebSocket from response
+    return response.webSocket();
+}
+
+// ============================================================================
+// WebSocket Events
+// ============================================================================
+
+/// Incoming WebSocket message type.
+///
+/// Used to distinguish between text and binary messages received
+/// from a WebSocket connection.
+pub const WebSocketIncomingMessage = union(enum) {
+    /// A text message (UTF-8 string).
+    text: []const u8,
+    /// A binary message (raw bytes).
+    binary: []const u8,
+};
+
+/// A WebSocket message event.
+///
+/// Represents a message received from a WebSocket connection.
+/// Use `text()` or `bytes()` to access the message data.
+///
+/// ## Example
+///
+/// ```zig
+/// if (event.text()) |message| {
+///     // Handle text message
+/// } else if (event.bytes()) |data| {
+///     // Handle binary message
+/// }
+/// ```
+pub const MessageEvent = struct {
+    id: u32,
+
+    pub fn init(ptr: u32) MessageEvent {
+        return MessageEvent{ .id = ptr };
+    }
+
+    /// Release the JavaScript object. Always call when done.
+    pub fn free(self: *const MessageEvent) void {
+        jsFree(self.id);
+    }
+
+    /// Get the message data as a text string.
+    ///
+    /// Returns null if the message is not a text message.
+    pub fn text(self: *const MessageEvent) ?[]const u8 {
+        const dataPtr = getObjectValue(self.id, "data");
+        if (dataPtr <= DefaultValueSize) return null;
+        // Try to get as string - returns null if it's not a string
+        return getStringFree(dataPtr);
+    }
+
+    /// Get the message data as bytes.
+    ///
+    /// Returns null if the message data cannot be converted to bytes.
+    pub fn bytes(self: *const MessageEvent) ?[]const u8 {
+        const dataPtr = getObjectValue(self.id, "data");
+        if (dataPtr <= DefaultValueSize) return null;
+        return ArrayBuffer.init(dataPtr).bytes();
+    }
+
+    /// Get the raw data value.
+    ///
+    /// Returns the underlying JavaScript data object.
+    pub fn data(self: *const MessageEvent) u32 {
+        return getObjectValue(self.id, "data");
+    }
+
+    /// Get the origin of the message.
+    pub fn origin(self: *const MessageEvent) ?[]const u8 {
+        const originPtr = getObjectValue(self.id, "origin");
+        if (originPtr <= DefaultValueSize) return null;
+        return getStringFree(originPtr);
+    }
+};
+
+/// A WebSocket close event.
+///
+/// Contains information about why a WebSocket connection was closed.
+///
+/// ## Example
+///
+/// ```zig
+/// const closeCode = event.code();
+/// const reason = event.reason();
+/// const wasClean = event.wasClean();
+/// ```
+pub const CloseEvent = struct {
+    id: u32,
+
+    pub fn init(ptr: u32) CloseEvent {
+        return CloseEvent{ .id = ptr };
+    }
+
+    /// Release the JavaScript object. Always call when done.
+    pub fn free(self: *const CloseEvent) void {
+        jsFree(self.id);
+    }
+
+    /// Get the close code.
+    ///
+    /// Returns the WebSocket close code (e.g., 1000 for normal closure).
+    pub fn code(self: *const CloseEvent) u16 {
+        return getObjectValueNum(self.id, "code", u16);
+    }
+
+    /// Get the close reason.
+    ///
+    /// Returns the reason string provided by the closing endpoint, or null.
+    pub fn reason(self: *const CloseEvent) ?[]const u8 {
+        const reasonPtr = getObjectValue(self.id, "reason");
+        if (reasonPtr <= DefaultValueSize) return null;
+        return getStringFree(reasonPtr);
+    }
+
+    /// Check if the connection was closed cleanly.
+    ///
+    /// Returns true if the WebSocket connection was closed cleanly
+    /// (i.e., with a proper closing handshake).
+    pub fn wasClean(self: *const CloseEvent) bool {
+        const result = getObjectValue(self.id, "wasClean");
+        return result == True;
+    }
+};
+
+/// A WebSocket error event.
+///
+/// Represents an error that occurred on a WebSocket connection.
+pub const ErrorEvent = struct {
+    id: u32,
+
+    pub fn init(ptr: u32) ErrorEvent {
+        return ErrorEvent{ .id = ptr };
+    }
+
+    /// Release the JavaScript object. Always call when done.
+    pub fn free(self: *const ErrorEvent) void {
+        jsFree(self.id);
+    }
+
+    /// Get the error message.
+    pub fn message(self: *const ErrorEvent) ?[]const u8 {
+        const msgPtr = getObjectValue(self.id, "message");
+        if (msgPtr <= DefaultValueSize) return null;
+        return getStringFree(msgPtr);
+    }
+
+    /// Get the error type.
+    pub fn errorType(self: *const ErrorEvent) ?[]const u8 {
+        const typePtr = getObjectValue(self.id, "type");
+        if (typePtr <= DefaultValueSize) return null;
+        return getStringFree(typePtr);
+    }
+};
+
+/// WebSocket event union.
+///
+/// Represents any event that can be received from a WebSocket connection.
+pub const WebSocketEvent = union(enum) {
+    /// A message was received.
+    message: MessageEvent,
+    /// The connection was closed.
+    close: CloseEvent,
+    /// An error occurred.
+    @"error": ErrorEvent,
+};
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -625,4 +900,97 @@ test "WebSocketPair.init creates struct with correct id" {
 
     const pair = WebSocketPair.init(123);
     try testing.expectEqual(@as(u32, 123), pair.id);
+}
+
+test "WebSocketIncomingMessage union variants" {
+    const testing = std.testing;
+
+    // Check that all expected variants exist
+    try testing.expect(@hasField(WebSocketIncomingMessage, "text"));
+    try testing.expect(@hasField(WebSocketIncomingMessage, "binary"));
+
+    // Create text variant
+    const textMsg: WebSocketIncomingMessage = .{ .text = "hello" };
+    try testing.expect(textMsg == .text);
+
+    // Create binary variant
+    const binaryMsg: WebSocketIncomingMessage = .{ .binary = "data" };
+    try testing.expect(binaryMsg == .binary);
+}
+
+test "MessageEvent struct has expected fields and methods" {
+    const testing = std.testing;
+
+    try testing.expect(@hasField(MessageEvent, "id"));
+
+    const event_type = MessageEvent;
+    try testing.expect(@hasDecl(event_type, "init"));
+    try testing.expect(@hasDecl(event_type, "free"));
+    try testing.expect(@hasDecl(event_type, "text"));
+    try testing.expect(@hasDecl(event_type, "bytes"));
+    try testing.expect(@hasDecl(event_type, "data"));
+    try testing.expect(@hasDecl(event_type, "origin"));
+}
+
+test "MessageEvent.init creates struct with correct id" {
+    const testing = std.testing;
+
+    const event = MessageEvent.init(42);
+    try testing.expectEqual(@as(u32, 42), event.id);
+}
+
+test "CloseEvent struct has expected fields and methods" {
+    const testing = std.testing;
+
+    try testing.expect(@hasField(CloseEvent, "id"));
+
+    const event_type = CloseEvent;
+    try testing.expect(@hasDecl(event_type, "init"));
+    try testing.expect(@hasDecl(event_type, "free"));
+    try testing.expect(@hasDecl(event_type, "code"));
+    try testing.expect(@hasDecl(event_type, "reason"));
+    try testing.expect(@hasDecl(event_type, "wasClean"));
+}
+
+test "CloseEvent.init creates struct with correct id" {
+    const testing = std.testing;
+
+    const event = CloseEvent.init(100);
+    try testing.expectEqual(@as(u32, 100), event.id);
+}
+
+test "ErrorEvent struct has expected fields and methods" {
+    const testing = std.testing;
+
+    try testing.expect(@hasField(ErrorEvent, "id"));
+
+    const event_type = ErrorEvent;
+    try testing.expect(@hasDecl(event_type, "init"));
+    try testing.expect(@hasDecl(event_type, "free"));
+    try testing.expect(@hasDecl(event_type, "message"));
+    try testing.expect(@hasDecl(event_type, "errorType"));
+}
+
+test "ErrorEvent.init creates struct with correct id" {
+    const testing = std.testing;
+
+    const event = ErrorEvent.init(200);
+    try testing.expectEqual(@as(u32, 200), event.id);
+}
+
+test "WebSocketEvent union variants" {
+    const testing = std.testing;
+
+    // Check that all expected variants exist
+    try testing.expect(@hasField(WebSocketEvent, "message"));
+    try testing.expect(@hasField(WebSocketEvent, "close"));
+    try testing.expect(@hasField(WebSocketEvent, "error"));
+}
+
+test "connect and connectWithProtocols functions exist" {
+    const testing = std.testing;
+
+    // Verify the module has connect functions
+    try testing.expect(@TypeOf(connect) == fn ([]const u8) ?WebSocket);
+    try testing.expect(@TypeOf(connectWithProtocols) == fn ([]const u8, ?[]const []const u8) ?WebSocket);
 }

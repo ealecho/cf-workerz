@@ -45,6 +45,20 @@ pub const WebSocket = apis.WebSocket;
 pub const WebSocketPair = apis.WebSocketPair;
 pub const WebSocketReadyState = apis.WebSocketReadyState;
 pub const WebSocketCloseCode = apis.WebSocketCloseCode;
+pub const WebSocketIncomingMessage = apis.WebSocketIncomingMessage;
+pub const MessageEvent = apis.MessageEvent;
+pub const CloseEvent = apis.CloseEvent;
+pub const ErrorEvent = apis.ErrorEvent;
+pub const WebSocketEvent = apis.WebSocketEvent;
+pub const wsConnect = apis.wsConnect;
+pub const wsConnectWithProtocols = apis.wsConnectWithProtocols;
+
+// Durable Objects - additional exports
+pub const GetAlarmOptions = apis.GetAlarmOptions;
+pub const SetAlarmOptions = apis.SetAlarmOptions;
+pub const ScheduledTime = apis.ScheduledTime;
+pub const SqlStorage = apis.SqlStorage;
+pub const SqlCursor = apis.SqlCursor;
 
 // Queues API
 pub const Queue = apis.Queue;

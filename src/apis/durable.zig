@@ -456,6 +456,50 @@ pub const DurableObjectNamespace = struct {
         defer objId.free();
         return objId.getStub();
     }
+
+    /// Get a stub directly from a name with a location hint.
+    ///
+    /// Location hints help optimize latency by suggesting where the DO should run.
+    /// This combines `idFromName()` and `getStubWithLocationHint()`.
+    ///
+    /// ## Parameters
+    ///
+    /// - `objName`: The name for the Durable Object.
+    /// - `locationHint`: A hint for where to run the DO (e.g., "wnam", "enam", "weur").
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const stub = namespace.getWithLocationHint("room:lobby", "wnam");
+    /// defer stub.free();
+    /// ```
+    pub fn getWithLocationHint(self: *const DurableObjectNamespace, objName: []const u8, locationHint: []const u8) DurableObjectStub {
+        const objId = self.idFromName(objName);
+        defer objId.free();
+        return self.getStubForId(&objId, locationHint);
+    }
+
+    /// Get a stub for an ID with a location hint.
+    ///
+    /// ## Parameters
+    ///
+    /// - `objId`: The Durable Object ID.
+    /// - `locationHint`: A hint for where to run the DO (e.g., "wnam", "enam", "weur").
+    pub fn getStubForId(self: *const DurableObjectNamespace, objId: *const DurableObjectId, locationHint: []const u8) DurableObjectStub {
+        const func = Function.init(getObjectValue(self.id, "get"));
+        defer func.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.pushID(objId.id);
+
+        const opts = Object.new();
+        defer opts.free();
+        opts.setText("locationHint", locationHint);
+        args.push(&opts);
+
+        return DurableObjectStub.init(func.callArgs(&args));
+    }
 };
 
 // ============================================================================
@@ -598,6 +642,79 @@ pub const DurableObjectState = struct {
         defer storage_.free();
         storage_.deleteAlarm();
     }
+
+    /// Schedule a background task to run after the response is sent.
+    ///
+    /// Use this to extend the lifetime of the DO beyond the current request
+    /// without blocking the response. The promise will be awaited before the
+    /// DO is evicted.
+    ///
+    /// ## Parameters
+    ///
+    /// - `promise`: A JavaScript Promise to wait for.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// // Schedule background cleanup
+    /// state.waitUntil(&cleanupPromise);
+    /// ```
+    pub fn waitUntil(self: *const DurableObjectState, promise: u32) void {
+        const func = Function.init(getObjectValue(self.id, "waitUntil"));
+        defer func.free();
+        _ = func.callArgsID(promise);
+    }
+
+    /// Get the tags associated with a hibernating WebSocket.
+    ///
+    /// Returns the tags that were set when the WebSocket was accepted
+    /// via `acceptWebSocket` with tags.
+    ///
+    /// ## Parameters
+    ///
+    /// - `ws`: The WebSocket to get tags for.
+    ///
+    /// ## Returns
+    ///
+    /// An array containing the string tags.
+    pub fn getTags(self: *const DurableObjectState, ws: *const WebSocket) Array {
+        const func = Function.init(getObjectValue(self.id, "getTags"));
+        defer func.free();
+        return Array.init(func.callArgsID(ws.id));
+    }
+
+    /// Set an automatic response for WebSocket pings.
+    ///
+    /// When a WebSocket receives a message matching the request pattern,
+    /// it will automatically respond with the configured response without
+    /// waking the DO from hibernation.
+    ///
+    /// ## Parameters
+    ///
+    /// - `requestResponse`: A WebSocketRequestResponsePair object.
+    pub fn setWebSocketAutoResponse(self: *const DurableObjectState, requestResponse: *const Object) void {
+        const func = Function.init(getObjectValue(self.id, "setWebSocketAutoResponse"));
+        defer func.free();
+        _ = func.callArgsID(requestResponse.id);
+    }
+
+    /// Get the current WebSocket auto-response configuration.
+    ///
+    /// Returns the WebSocketRequestResponsePair if one is set, or null.
+    pub fn getWebSocketAutoResponse(self: *const DurableObjectState) ?Object {
+        const func = Function.init(getObjectValue(self.id, "getWebSocketAutoResponse"));
+        defer func.free();
+        const result = func.call();
+        if (result <= DefaultValueSize) return null;
+        return Object.init(result);
+    }
+
+    /// Clear the WebSocket auto-response configuration.
+    pub fn unsetWebSocketAutoResponse(self: *const DurableObjectState) void {
+        const func = Function.init(getObjectValue(self.id, "setWebSocketAutoResponse"));
+        defer func.free();
+        _ = func.callArgsID(Null);
+    }
 };
 
 /// Iterator over WebSockets in a Durable Object.
@@ -662,6 +779,127 @@ pub const StorageListOptions = struct {
         return obj;
     }
 };
+
+/// Options for getAlarm operations.
+///
+/// ## Example
+///
+/// ```zig
+/// const alarm = storage.getAlarmWithOptions(.{ .allowConcurrency = true });
+/// ```
+pub const GetAlarmOptions = struct {
+    /// If true, allow concurrent alarm operations.
+    allowConcurrency: bool = false,
+
+    pub fn toObject(self: *const GetAlarmOptions) Object {
+        const obj = Object.new();
+        if (self.allowConcurrency) obj.setBool("allowConcurrency", true);
+        return obj;
+    }
+};
+
+/// Options for setAlarm and deleteAlarm operations.
+///
+/// ## Example
+///
+/// ```zig
+/// storage.setAlarmWithOptions(scheduledTime, .{
+///     .allowConcurrency = true,
+///     .allowUnconfirmed = true,
+/// });
+/// ```
+pub const SetAlarmOptions = struct {
+    /// If true, allow concurrent alarm operations.
+    allowConcurrency: bool = false,
+    /// If true, allow setting alarm without waiting for confirmation.
+    allowUnconfirmed: bool = false,
+
+    pub fn toObject(self: *const SetAlarmOptions) Object {
+        const obj = Object.new();
+        if (self.allowConcurrency) obj.setBool("allowConcurrency", true);
+        if (self.allowUnconfirmed) obj.setBool("allowUnconfirmed", true);
+        return obj;
+    }
+};
+
+/// Helper for specifying alarm times.
+///
+/// `ScheduledTime` provides a convenient way to specify when an alarm should trigger,
+/// either as an absolute timestamp or as an offset from the current time.
+///
+/// ## Example
+///
+/// ```zig
+/// // Set alarm for 1 hour from now
+/// const oneHourMs: i64 = 60 * 60 * 1000;
+/// storage.setAlarm(ScheduledTime.fromOffsetMs(oneHourMs).toTimestamp());
+///
+/// // Or with absolute timestamp
+/// storage.setAlarm(ScheduledTime.fromTimestamp(1704067200000).toTimestamp());
+/// ```
+pub const ScheduledTime = union(enum) {
+    /// Absolute timestamp in milliseconds since Unix epoch.
+    timestamp: u64,
+    /// Offset in milliseconds from the current time.
+    offset: i64,
+
+    /// Create a ScheduledTime from an absolute timestamp (milliseconds since epoch).
+    pub fn fromTimestamp(ts: u64) ScheduledTime {
+        return .{ .timestamp = ts };
+    }
+
+    /// Create a ScheduledTime from an offset in milliseconds from now.
+    pub fn fromOffsetMs(offset_ms: i64) ScheduledTime {
+        return .{ .offset = offset_ms };
+    }
+
+    /// Create a ScheduledTime from an offset in seconds from now.
+    pub fn fromOffsetSecs(offset_secs: i64) ScheduledTime {
+        return .{ .offset = offset_secs * 1000 };
+    }
+
+    /// Create a ScheduledTime from an offset in minutes from now.
+    pub fn fromOffsetMins(offset_mins: i64) ScheduledTime {
+        return .{ .offset = offset_mins * 60 * 1000 };
+    }
+
+    /// Create a ScheduledTime from an offset in hours from now.
+    pub fn fromOffsetHours(offset_hours: i64) ScheduledTime {
+        return .{ .offset = offset_hours * 60 * 60 * 1000 };
+    }
+
+    /// Convert to an absolute timestamp in milliseconds.
+    ///
+    /// For timestamp values, returns the value directly.
+    /// For offset values, adds the offset to the current time.
+    ///
+    /// Note: This requires the JavaScript Date.now() to get the current time.
+    pub fn toTimestamp(self: ScheduledTime) u64 {
+        return switch (self) {
+            .timestamp => |ts| ts,
+            .offset => |offset| {
+                // Get current time from JavaScript Date.now()
+                const now = getCurrentTimeMs();
+                if (offset < 0) {
+                    const abs_offset: u64 = @intCast(-offset);
+                    return if (now > abs_offset) now - abs_offset else 0;
+                } else {
+                    return now + @as(u64, @intCast(offset));
+                }
+            },
+        };
+    }
+};
+
+/// Get the current time in milliseconds since epoch.
+/// Uses JavaScript's Date.now().
+fn getCurrentTimeMs() u64 {
+    const dateClass = common.jsGetClass(common.Classes.Date.toInt());
+    const nowFunc = Function.init(getObjectValue(dateClass, "now"));
+    defer nowFunc.free();
+    const result = nowFunc.call();
+    return @intFromFloat(common.jsHeapGetNum(result));
+}
 
 /// Persistent storage for a Durable Object.
 ///
@@ -960,6 +1198,61 @@ pub const DurableObjectStorage = struct {
         _ = func.call();
     }
 
+    /// Get the currently scheduled alarm time with options.
+    ///
+    /// Returns the Unix timestamp in milliseconds, or null if no alarm is set.
+    ///
+    /// ## Parameters
+    ///
+    /// - `options`: Options for the operation (e.g., allowConcurrency).
+    pub fn getAlarmWithOptions(self: *const DurableObjectStorage, options: GetAlarmOptions) ?u64 {
+        const func = AsyncFunction.init(getObjectValue(self.id, "getAlarm"));
+        defer func.free();
+
+        const opts = options.toObject();
+        defer opts.free();
+
+        const result = func.callArgsID(opts.id);
+        if (result <= DefaultValueSize) return null;
+        return @intFromFloat(common.jsHeapGetNum(result));
+    }
+
+    /// Set an alarm with options.
+    ///
+    /// ## Parameters
+    ///
+    /// - `scheduledTime`: Unix timestamp in milliseconds.
+    /// - `options`: Options for the operation (e.g., allowConcurrency, allowUnconfirmed).
+    pub fn setAlarmWithOptions(self: *const DurableObjectStorage, scheduledTime: u64, options: SetAlarmOptions) void {
+        const func = AsyncFunction.init(getObjectValue(self.id, "setAlarm"));
+        defer func.free();
+
+        const args = Array.new();
+        defer args.free();
+        args.pushNum(u64, scheduledTime);
+
+        const opts = options.toObject();
+        defer opts.free();
+        args.push(&opts);
+
+        _ = func.callArgs(&args);
+    }
+
+    /// Delete any scheduled alarm with options.
+    ///
+    /// ## Parameters
+    ///
+    /// - `options`: Options for the operation (e.g., allowConcurrency, allowUnconfirmed).
+    pub fn deleteAlarmWithOptions(self: *const DurableObjectStorage, options: SetAlarmOptions) void {
+        const func = AsyncFunction.init(getObjectValue(self.id, "deleteAlarm"));
+        defer func.free();
+
+        const opts = options.toObject();
+        defer opts.free();
+
+        _ = func.callArgsID(opts.id);
+    }
+
     // ========================================================================
     // Transaction
     // ========================================================================
@@ -979,6 +1272,213 @@ pub const DurableObjectStorage = struct {
         const func = AsyncFunction.init(getObjectValue(self.id, "sync"));
         defer func.free();
         _ = func.call();
+    }
+
+    // ========================================================================
+    // SQL Storage
+    // ========================================================================
+
+    /// Get access to SQLite-backed storage.
+    ///
+    /// Durable Objects can use SQLite for relational data storage.
+    /// This provides SQL query capabilities in addition to key-value storage.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const sqlStorage = storage.sql();
+    /// defer sqlStorage.free();
+    ///
+    /// var cursor = sqlStorage.exec("SELECT * FROM users WHERE id = ?", .{userId});
+    /// defer cursor.free();
+    ///
+    /// if (cursor.one()) |row| {
+    ///     defer row.free();
+    ///     // Use row data
+    /// }
+    /// ```
+    pub fn sql(self: *const DurableObjectStorage) SqlStorage {
+        return SqlStorage.init(getObjectValue(self.id, "sql"));
+    }
+};
+
+/// SQLite storage interface for Durable Objects.
+///
+/// Provides SQL query capabilities for Durable Objects with SQLite-backed storage.
+/// This is an alternative to the key-value storage API for relational data.
+///
+/// ## Example
+///
+/// ```zig
+/// const sqlStorage = storage.sql();
+/// defer sqlStorage.free();
+///
+/// // Execute a query
+/// var cursor = sqlStorage.exec("SELECT name, email FROM users WHERE active = ?", .{true});
+/// defer cursor.free();
+///
+/// // Iterate over results
+/// while (cursor.next()) |row| {
+///     defer row.free();
+///     const name = row.getText("name");
+///     const email = row.getText("email");
+///     // Process row...
+/// }
+/// ```
+pub const SqlStorage = struct {
+    id: u32,
+
+    pub fn init(ptr: u32) SqlStorage {
+        return SqlStorage{ .id = ptr };
+    }
+
+    /// Release the JavaScript object. Always call when done.
+    pub fn free(self: *const SqlStorage) void {
+        jsFree(self.id);
+    }
+
+    /// Execute a SQL query and return a cursor for iterating results.
+    ///
+    /// Use tagged template literal style: the query string with `?` placeholders,
+    /// and arguments will be bound positionally.
+    ///
+    /// ## Parameters
+    ///
+    /// - `query`: SQL query string with `?` placeholders for parameters.
+    ///
+    /// ## Returns
+    ///
+    /// A `SqlCursor` for iterating over the result rows.
+    pub fn exec(self: *const SqlStorage, query: []const u8) SqlCursor {
+        const func = Function.init(getObjectValue(self.id, "exec"));
+        defer func.free();
+
+        const queryStr = String.new(query);
+        defer queryStr.free();
+
+        return SqlCursor.init(func.callArgsID(queryStr.id));
+    }
+
+    /// Execute a SQL query with bound parameters.
+    ///
+    /// ## Parameters
+    ///
+    /// - `query`: SQL query string with `?` placeholders.
+    /// - `params`: Array of parameter values to bind.
+    pub fn execWithParams(self: *const SqlStorage, query: []const u8, params: *const Array) SqlCursor {
+        const func = Function.init(getObjectValue(self.id, "exec"));
+        defer func.free();
+
+        const args = Array.new();
+        defer args.free();
+
+        const queryStr = String.new(query);
+        defer queryStr.free();
+        args.push(&queryStr);
+
+        // Add each param
+        args.pushID(params.id);
+
+        return SqlCursor.init(func.callArgs(&args));
+    }
+
+    /// Get the database size in bytes.
+    pub fn databaseSize(self: *const SqlStorage) u64 {
+        const sizePtr = getObjectValue(self.id, "databaseSize");
+        if (sizePtr <= DefaultValueSize) return 0;
+        return @intFromFloat(common.jsHeapGetNum(sizePtr));
+    }
+};
+
+/// Cursor for iterating over SQL query results.
+///
+/// The cursor provides methods to iterate row-by-row or retrieve all results at once.
+pub const SqlCursor = struct {
+    id: u32,
+    iterator: ?Object = null,
+
+    pub fn init(ptr: u32) SqlCursor {
+        return SqlCursor{ .id = ptr };
+    }
+
+    /// Release the JavaScript object. Always call when done.
+    pub fn free(self: *SqlCursor) void {
+        if (self.iterator) |iter| {
+            iter.free();
+        }
+        jsFree(self.id);
+    }
+
+    /// Get the next row from the cursor.
+    ///
+    /// Returns null when there are no more rows.
+    pub fn next(self: *SqlCursor) ?Object {
+        // The cursor itself is iterable, so we call next() on the iterator
+        if (self.iterator == null) {
+            // Get the iterator
+            const iterFunc = Function.init(getObjectValue(self.id, "raw"));
+            defer iterFunc.free();
+            self.iterator = Object.init(iterFunc.call());
+        }
+
+        if (self.iterator) |iter| {
+            const nextFunc = Function.init(getObjectValue(iter.id, "next"));
+            defer nextFunc.free();
+            const result = Object.init(nextFunc.call());
+            defer result.free();
+
+            // Check if done
+            const done = getObjectValue(result.id, "done");
+            if (done == True) return null;
+
+            // Return the value
+            const valuePtr = getObjectValue(result.id, "value");
+            if (valuePtr <= DefaultValueSize) return null;
+            return Object.init(valuePtr);
+        }
+
+        return null;
+    }
+
+    /// Get the first row only.
+    ///
+    /// Useful for queries that should return exactly one row.
+    pub fn one(self: *const SqlCursor) ?Object {
+        const func = Function.init(getObjectValue(self.id, "one"));
+        defer func.free();
+        const result = func.call();
+        if (result <= DefaultValueSize) return null;
+        return Object.init(result);
+    }
+
+    /// Convert all results to an array.
+    ///
+    /// Be careful with large result sets as this loads all rows into memory.
+    pub fn toArray(self: *const SqlCursor) Array {
+        const func = Function.init(getObjectValue(self.id, "toArray"));
+        defer func.free();
+        return Array.init(func.call());
+    }
+
+    /// Get the column names from the result.
+    pub fn columnNames(self: *const SqlCursor) Array {
+        return Array.init(getObjectValue(self.id, "columnNames"));
+    }
+
+    /// Get the number of rows changed by the query.
+    ///
+    /// For INSERT, UPDATE, DELETE queries.
+    pub fn rowsWritten(self: *const SqlCursor) u64 {
+        const ptr = getObjectValue(self.id, "rowsWritten");
+        if (ptr <= DefaultValueSize) return 0;
+        return @intFromFloat(common.jsHeapGetNum(ptr));
+    }
+
+    /// Get the number of rows read by the query.
+    pub fn rowsRead(self: *const SqlCursor) u64 {
+        const ptr = getObjectValue(self.id, "rowsRead");
+        if (ptr <= DefaultValueSize) return 0;
+        return @intFromFloat(common.jsHeapGetNum(ptr));
     }
 };
 
@@ -1249,4 +1749,158 @@ test "DurableObjectStub.FetchOptions union variants" {
     try testing.expect(@hasField(FetchOptions, "requestInit"));
     try testing.expect(@hasField(FetchOptions, "request"));
     try testing.expect(@hasField(FetchOptions, "none"));
+}
+
+test "GetAlarmOptions default values" {
+    const testing = std.testing;
+
+    const opts = GetAlarmOptions{};
+    try testing.expectEqual(false, opts.allowConcurrency);
+}
+
+test "GetAlarmOptions with allowConcurrency" {
+    const testing = std.testing;
+
+    const opts = GetAlarmOptions{ .allowConcurrency = true };
+    try testing.expectEqual(true, opts.allowConcurrency);
+}
+
+test "SetAlarmOptions default values" {
+    const testing = std.testing;
+
+    const opts = SetAlarmOptions{};
+    try testing.expectEqual(false, opts.allowConcurrency);
+    try testing.expectEqual(false, opts.allowUnconfirmed);
+}
+
+test "SetAlarmOptions with all options" {
+    const testing = std.testing;
+
+    const opts = SetAlarmOptions{
+        .allowConcurrency = true,
+        .allowUnconfirmed = true,
+    };
+    try testing.expectEqual(true, opts.allowConcurrency);
+    try testing.expectEqual(true, opts.allowUnconfirmed);
+}
+
+test "ScheduledTime.fromTimestamp creates timestamp variant" {
+    const testing = std.testing;
+
+    const st = ScheduledTime.fromTimestamp(1704067200000);
+    try testing.expect(st == .timestamp);
+    try testing.expectEqual(@as(u64, 1704067200000), st.timestamp);
+}
+
+test "ScheduledTime.fromOffsetMs creates offset variant" {
+    const testing = std.testing;
+
+    const st = ScheduledTime.fromOffsetMs(3600000);
+    try testing.expect(st == .offset);
+    try testing.expectEqual(@as(i64, 3600000), st.offset);
+}
+
+test "ScheduledTime.fromOffsetSecs converts to milliseconds" {
+    const testing = std.testing;
+
+    const st = ScheduledTime.fromOffsetSecs(60);
+    try testing.expect(st == .offset);
+    try testing.expectEqual(@as(i64, 60000), st.offset);
+}
+
+test "ScheduledTime.fromOffsetMins converts to milliseconds" {
+    const testing = std.testing;
+
+    const st = ScheduledTime.fromOffsetMins(5);
+    try testing.expect(st == .offset);
+    try testing.expectEqual(@as(i64, 300000), st.offset);
+}
+
+test "ScheduledTime.fromOffsetHours converts to milliseconds" {
+    const testing = std.testing;
+
+    const st = ScheduledTime.fromOffsetHours(1);
+    try testing.expect(st == .offset);
+    try testing.expectEqual(@as(i64, 3600000), st.offset);
+}
+
+test "ScheduledTime.toTimestamp for timestamp returns value directly" {
+    const testing = std.testing;
+
+    const st = ScheduledTime.fromTimestamp(1704067200000);
+    try testing.expectEqual(@as(u64, 1704067200000), st.toTimestamp());
+}
+
+test "DurableObjectNamespace has location hint methods" {
+    const testing = std.testing;
+
+    const ns_type = DurableObjectNamespace;
+    try testing.expect(@hasDecl(ns_type, "getWithLocationHint"));
+    try testing.expect(@hasDecl(ns_type, "getStubForId"));
+}
+
+test "DurableObjectState has new methods" {
+    const testing = std.testing;
+
+    const state_type = DurableObjectState;
+    try testing.expect(@hasDecl(state_type, "waitUntil"));
+    try testing.expect(@hasDecl(state_type, "getTags"));
+    try testing.expect(@hasDecl(state_type, "setWebSocketAutoResponse"));
+    try testing.expect(@hasDecl(state_type, "getWebSocketAutoResponse"));
+    try testing.expect(@hasDecl(state_type, "unsetWebSocketAutoResponse"));
+}
+
+test "DurableObjectStorage has alarm options methods" {
+    const testing = std.testing;
+
+    const storage_type = DurableObjectStorage;
+    try testing.expect(@hasDecl(storage_type, "getAlarmWithOptions"));
+    try testing.expect(@hasDecl(storage_type, "setAlarmWithOptions"));
+    try testing.expect(@hasDecl(storage_type, "deleteAlarmWithOptions"));
+    try testing.expect(@hasDecl(storage_type, "sql"));
+}
+
+test "SqlStorage struct has expected fields and methods" {
+    const testing = std.testing;
+
+    try testing.expect(@hasField(SqlStorage, "id"));
+
+    const sql_type = SqlStorage;
+    try testing.expect(@hasDecl(sql_type, "init"));
+    try testing.expect(@hasDecl(sql_type, "free"));
+    try testing.expect(@hasDecl(sql_type, "exec"));
+    try testing.expect(@hasDecl(sql_type, "execWithParams"));
+    try testing.expect(@hasDecl(sql_type, "databaseSize"));
+}
+
+test "SqlStorage.init creates struct with correct id" {
+    const testing = std.testing;
+
+    const sql = SqlStorage.init(999);
+    try testing.expectEqual(@as(u32, 999), sql.id);
+}
+
+test "SqlCursor struct has expected fields and methods" {
+    const testing = std.testing;
+
+    try testing.expect(@hasField(SqlCursor, "id"));
+    try testing.expect(@hasField(SqlCursor, "iterator"));
+
+    const cursor_type = SqlCursor;
+    try testing.expect(@hasDecl(cursor_type, "init"));
+    try testing.expect(@hasDecl(cursor_type, "free"));
+    try testing.expect(@hasDecl(cursor_type, "next"));
+    try testing.expect(@hasDecl(cursor_type, "one"));
+    try testing.expect(@hasDecl(cursor_type, "toArray"));
+    try testing.expect(@hasDecl(cursor_type, "columnNames"));
+    try testing.expect(@hasDecl(cursor_type, "rowsWritten"));
+    try testing.expect(@hasDecl(cursor_type, "rowsRead"));
+}
+
+test "SqlCursor.init creates struct with correct id" {
+    const testing = std.testing;
+
+    const cursor = SqlCursor.init(888);
+    try testing.expectEqual(@as(u32, 888), cursor.id);
+    try testing.expectEqual(@as(?Object, null), cursor.iterator);
 }
