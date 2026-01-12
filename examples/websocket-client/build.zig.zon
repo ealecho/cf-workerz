@@ -1,6 +1,6 @@
 .{
     .name = .websocket_client,
-    .fingerprint = 0xa1b2c3d4e5f67890,
+    .fingerprint = 0xf2123b71d66161a8,
     .version = "0.1.0",
 
     .dependencies = .{

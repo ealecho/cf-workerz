@@ -57,8 +57,17 @@ fn handleRoot(ctx: *FetchContext) void {
 fn handleEchoClient(ctx: *FetchContext) void {
     // Connect to a public WebSocket echo server
     // Note: In production, use a real WebSocket endpoint
-    const ws = workers.wsConnect("wss://echo.websocket.org");
+    var ws = workers.wsConnect("wss://echo.websocket.org") orelse {
+        ctx.json(.{
+            .success = false,
+            .err = "Failed to connect to WebSocket server",
+        }, 502);
+        return;
+    };
     defer ws.free();
+
+    // Accept the connection (required before sending)
+    ws.accept();
 
     // Check connection state
     const state = ws.readyState();
@@ -134,9 +143,14 @@ fn handleSendMessage(ctx: *FetchContext) void {
     if (json.getString("protocol")) |protocol| {
         // Connect with subprotocol negotiation
         const protocols = [_][]const u8{protocol};
-        const ws = workers.wsConnectWithProtocols(url, &protocols);
+        var ws = workers.wsConnectWithProtocols(url, &protocols) orelse {
+            ctx.json(.{ .success = false, .err = "Failed to connect" }, 502);
+            return;
+        };
         defer ws.free();
 
+        // Accept connection before sending
+        ws.accept();
         ws.sendText(message);
 
         ctx.json(.{
@@ -147,9 +161,14 @@ fn handleSendMessage(ctx: *FetchContext) void {
         }, 200);
     } else {
         // Simple connection without protocols
-        const ws = workers.wsConnect(url);
+        var ws = workers.wsConnect(url) orelse {
+            ctx.json(.{ .success = false, .err = "Failed to connect" }, 502);
+            return;
+        };
         defer ws.free();
 
+        // Accept connection before sending
+        ws.accept();
         ws.sendText(message);
 
         ctx.json(.{

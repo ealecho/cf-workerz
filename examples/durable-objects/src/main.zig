@@ -130,22 +130,18 @@ fn handleFetchDO(ctx: *FetchContext) void {
         return;
     };
 
-    // Get DO by name
-    const id = namespace.idFromName(name);
-    defer id.free();
-
-    const stub = id.getStub();
+    // Use getWithLocationHint which works correctly
+    const stub = namespace.getWithLocationHint(name, "enam");
     defer stub.free();
 
-    // Use convenience method for GET
-    const response = stub.get("https://do/status");
+    // Use fetch method directly
+    const response = stub.fetch(.{ .text = "https://do/status" }, null);
     defer response.free();
 
     const body = response.text() orelse "(empty)";
 
     ctx.json(.{
         .doName = name,
-        .doId = id.toString(),
         .response = body,
     }, 200);
 }
@@ -173,7 +169,7 @@ fn handleScheduleAlarm(ctx: *FetchContext) void {
     defer json.deinit();
 
     const offsetType = json.getStringOr("offsetType", "seconds");
-    const offset = json.getInt("offset", u64) orelse 30;
+    const offset = json.getInt("offset", i64) orelse 30;
 
     // Create ScheduledTime based on offset type
     const scheduledTime = if (std.mem.eql(u8, offsetType, "milliseconds"))

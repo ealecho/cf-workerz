@@ -280,6 +280,9 @@ pub const DurableObjectStub = struct {
             .request => |req| {
                 args.push(req);
             },
+            .string => |str| {
+                args.push(str);
+            },
         }
 
         // Add options if provided

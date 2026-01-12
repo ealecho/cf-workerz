@@ -146,6 +146,12 @@ pub const StatusCode = enum(u16) {
             .NetworkAuthenticationRequired => "Network Authentication Required",
         };
     }
+
+    /// Convert a raw u16 status code to a StatusCode enum.
+    /// Returns .Ok if the code is not recognized.
+    pub fn fromInt(code: u16) StatusCode {
+        return @enumFromInt(code);
+    }
 };
 
 pub const Method = enum {

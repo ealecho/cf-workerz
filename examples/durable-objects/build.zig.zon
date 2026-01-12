@@ -1,6 +1,6 @@
 .{
     .name = .durable_objects,
-    .fingerprint = 0xb2c3d4e5f6789012,
+    .fingerprint = 0x6ee5eaece6ff8ba9,
     .version = "0.1.0",
 
     .dependencies = .{
