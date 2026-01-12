@@ -12,6 +12,15 @@ pub const SQLSuccess = apis.SQLSuccess;
 pub const PreparedStatement = apis.PreparedStatement;
 pub const D1Query = apis.D1Query;
 pub const DurableObject = apis.DurableObject;
+pub const DurableObjectId = apis.DurableObjectId;
+pub const DurableObjectStub = apis.DurableObjectStub;
+pub const DurableObjectNamespace = apis.DurableObjectNamespace;
+pub const DurableObjectState = apis.DurableObjectState;
+pub const DurableObjectStorage = apis.DurableObjectStorage;
+pub const StorageListOptions = apis.StorageListOptions;
+pub const StorageListResult = apis.StorageListResult;
+pub const UniqueIdOptions = apis.UniqueIdOptions;
+pub const DOWebSocketIterator = apis.WebSocketIterator;
 pub const fetch = apis.fetch;
 pub const KVNamespace = apis.KVNamespace;
 pub const GetOptions = apis.GetOptions;
@@ -34,6 +43,8 @@ pub const R2ListOptions = apis.R2ListOptions;
 pub const R2GetResponse = apis.R2GetResponse;
 pub const WebSocket = apis.WebSocket;
 pub const WebSocketPair = apis.WebSocketPair;
+pub const WebSocketReadyState = apis.WebSocketReadyState;
+pub const WebSocketCloseCode = apis.WebSocketCloseCode;
 
 // Queues API
 pub const Queue = apis.Queue;

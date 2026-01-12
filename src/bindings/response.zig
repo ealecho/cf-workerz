@@ -256,4 +256,113 @@ pub const Response = struct {
         defer ab.?.free();
         return ab.?.bytes();
     }
+
+    // ========================================================================
+    // Static Methods
+    // ========================================================================
+
+    /// Create a WebSocket upgrade response.
+    ///
+    /// This is a Cloudflare Workers-specific method that creates a Response
+    /// for WebSocket upgrade requests. The response includes the client-side
+    /// WebSocket that will be sent to the client.
+    ///
+    /// ## Parameters
+    ///
+    /// - `clientWebSocket`: The client-side WebSocket from `WebSocketPair.client()`.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// fn handleUpgrade(ctx: *FetchContext) void {
+    ///     const pair = WebSocketPair.new();
+    ///     defer pair.free();
+    ///
+    ///     var server = pair.server();
+    ///     defer server.free();
+    ///     server.accept();
+    ///
+    ///     const client = pair.client();
+    ///     defer client.free();
+    ///
+    ///     const response = Response.webSocket(&client);
+    ///     defer response.free();
+    ///     ctx.send(&response);
+    /// }
+    /// ```
+    pub fn webSocketUpgrade(clientWebSocket: *const WebSocket) Response {
+        // Create response with status 101 and the webSocket in ResponseInit
+        const responseInit = ResponseInit{
+            .status = 101,
+            .statusText = "Switching Protocols",
+            .webSocket = clientWebSocket,
+        };
+
+        return Response.new(.{ .none = {} }, responseInit);
+    }
+
+    /// Create a redirect response.
+    ///
+    /// Static method to create a redirect Response to the given URL.
+    ///
+    /// ## Parameters
+    ///
+    /// - `url`: The URL to redirect to.
+    /// - `statusCode`: The HTTP status code (301, 302, 303, 307, or 308).
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const response = Response.redirectTo("https://example.com/new-page", 302);
+    /// defer response.free();
+    /// ctx.send(&response);
+    /// ```
+    pub fn redirectTo(redirectUrl: []const u8, statusCode: u16) Response {
+        const hdrs = Headers.new();
+        defer hdrs.free();
+        hdrs.setText("Location", redirectUrl);
+
+        return Response.new(.{ .none = {} }, .{
+            .status = statusCode,
+            .statusText = switch (statusCode) {
+                301 => "Moved Permanently",
+                302 => "Found",
+                303 => "See Other",
+                307 => "Temporary Redirect",
+                308 => "Permanent Redirect",
+                else => "Redirect",
+            },
+            .headers = &hdrs,
+        });
+    }
+
+    /// Create a JSON response.
+    ///
+    /// Static method to create a Response with JSON content.
+    ///
+    /// ## Parameters
+    ///
+    /// - `body`: The JSON string body.
+    /// - `statusCode`: The HTTP status code.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const response = Response.jsonResponse("{\"success\":true}", 200);
+    /// defer response.free();
+    /// ctx.send(&response);
+    /// ```
+    pub fn jsonResponse(body: []const u8, statusCode: u16) Response {
+        const hdrs = Headers.new();
+        defer hdrs.free();
+        hdrs.setText("Content-Type", "application/json");
+
+        const str = String.new(body);
+        defer str.free();
+
+        return Response.new(.{ .string = &str }, .{
+            .status = statusCode,
+            .headers = &hdrs,
+        });
+    }
 };

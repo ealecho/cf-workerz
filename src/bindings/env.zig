@@ -59,6 +59,7 @@ const D1Database = @import("../apis/d1.zig").D1Database;
 const Queue = @import("../apis/queues.zig").Queue;
 const Fetcher = @import("../apis/service.zig").Fetcher;
 const AI = @import("../apis/ai.zig").AI;
+const DurableObjectNamespace = @import("../apis/durable.zig").DurableObjectNamespace;
 
 /// Environment bindings accessor.
 ///
@@ -145,7 +146,48 @@ pub const Env = struct {
         return D1Database.init(d1Ptr);
     }
 
-    pub fn durableObject() void {}
+    /// Get a Durable Object namespace binding.
+    ///
+    /// Returns a `DurableObjectNamespace` for accessing Durable Object instances.
+    /// Durable Objects provide strongly consistent, globally distributed storage
+    /// and coordination.
+    ///
+    /// ## Configuration
+    ///
+    /// ```toml
+    /// [[durable_objects.bindings]]
+    /// name = "MY_DO"
+    /// class_name = "MyDurableObject"
+    ///
+    /// [[migrations]]
+    /// tag = "v1"
+    /// new_classes = ["MyDurableObject"]
+    /// ```
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const namespace = ctx.env.durableObject("MY_DO") orelse {
+    ///     ctx.throw(500, "Durable Object not configured");
+    ///     return;
+    /// };
+    /// defer namespace.free();
+    ///
+    /// // Get a DO instance by name
+    /// const id = namespace.idFromName("my-object");
+    /// defer id.free();
+    ///
+    /// const stub = id.getStub();
+    /// defer stub.free();
+    ///
+    /// const response = stub.fetch(.{ .text = "https://do/action" }, null);
+    /// defer response.free();
+    /// ```
+    pub fn durableObject(self: *const Env, name: []const u8) ?DurableObjectNamespace {
+        const doPtr = getObjectValue(self.id, name);
+        if (doPtr <= DefaultValueSize) return null;
+        return DurableObjectNamespace.init(doPtr);
+    }
 
     /// Get a KV namespace binding.
     ///

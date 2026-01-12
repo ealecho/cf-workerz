@@ -42,6 +42,15 @@ pub const D1Query = d1.D1Query;
 // Durable Objects API
 const durable = @import("durable.zig");
 pub const DurableObject = durable.DurableObject;
+pub const DurableObjectId = durable.DurableObjectId;
+pub const DurableObjectStub = durable.DurableObjectStub;
+pub const DurableObjectNamespace = durable.DurableObjectNamespace;
+pub const DurableObjectState = durable.DurableObjectState;
+pub const DurableObjectStorage = durable.DurableObjectStorage;
+pub const StorageListOptions = durable.StorageListOptions;
+pub const StorageListResult = durable.StorageListResult;
+pub const UniqueIdOptions = durable.UniqueIdOptions;
+pub const WebSocketIterator = durable.WebSocketIterator;
 
 // Fetch API
 const fetch_api = @import("fetch.zig");
@@ -92,3 +101,5 @@ pub const Fetcher = service.Fetcher;
 const webSocket = @import("webSocket.zig");
 pub const WebSocket = webSocket.WebSocket;
 pub const WebSocketPair = webSocket.WebSocketPair;
+pub const WebSocketReadyState = webSocket.ReadyState;
+pub const WebSocketCloseCode = webSocket.CloseCode;

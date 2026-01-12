@@ -882,6 +882,288 @@ fn callService(ctx: *FetchContext) void {
 }
 ```
 
+## WebSockets
+
+WebSockets enable real-time, bidirectional communication between clients and your Worker.
+
+### Basic WebSocket Handler
+
+```zig
+const workers = @import("cf-workerz");
+const FetchContext = workers.FetchContext;
+const WebSocketPair = workers.WebSocketPair;
+const Response = workers.Response;
+
+fn handleWebSocket(ctx: *FetchContext) void {
+    // Check if this is a WebSocket upgrade request
+    const upgrade = ctx.header("Upgrade") orelse "";
+    if (!std.mem.eql(u8, upgrade, "websocket")) {
+        ctx.text("Expected WebSocket upgrade", 426);
+        return;
+    }
+
+    // Create a WebSocket pair
+    const pair = WebSocketPair.new();
+    defer pair.free();
+
+    // Get the server-side WebSocket
+    var server = pair.server();
+    defer server.free();
+
+    // Accept the connection
+    server.accept();
+
+    // Send a welcome message
+    server.sendText("{\"type\":\"connected\"}");
+
+    // Get the client WebSocket for the response
+    const client = pair.client();
+    defer client.free();
+
+    // Return the upgrade response
+    const response = Response.webSocketUpgrade(&client);
+    defer response.free();
+    ctx.send(&response);
+}
+```
+
+### WebSocket Methods
+
+```zig
+fn websocketOperations(ws: *workers.WebSocket) void {
+    // Check connection state
+    if (ws.readyState() == .Open) {
+        // Send text message
+        ws.sendText("Hello, client!");
+
+        // Send binary data
+        const data = [_]u8{ 0x00, 0x01, 0x02 };
+        ws.sendBytes(&data);
+
+        // Close with code and reason
+        ws.close(.NormalClosure, "Goodbye!");
+    }
+}
+```
+
+### WebSocket Close Codes
+
+| Code | Name | Description |
+|------|------|-------------|
+| 1000 | NormalClosure | Normal close |
+| 1001 | GoingAway | Server shutting down |
+| 1002 | ProtocolError | Protocol error |
+| 1003 | UnsupportedData | Invalid data type |
+| 1008 | PolicyViolation | Policy violation |
+| 1011 | InternalError | Server error |
+
+### Configuration
+
+No special wrangler.toml configuration needed for basic WebSockets.
+
+## Durable Objects
+
+Durable Objects provide strongly consistent, globally distributed coordination and storage. Each DO instance is single-threaded and has its own persistent storage.
+
+### Accessing a Durable Object
+
+```zig
+fn handleDO(ctx: *FetchContext) void {
+    // Get the DO namespace from environment
+    const namespace = ctx.env.durableObject("MY_DO") orelse {
+        ctx.throw(500, "DO not configured");
+        return;
+    };
+    defer namespace.free();
+
+    // Get a DO instance by name (deterministic - same name = same DO)
+    const id = namespace.idFromName("room:lobby");
+    defer id.free();
+
+    // Get a stub to communicate with the DO
+    const stub = id.getStub();
+    defer stub.free();
+
+    // Make a request to the DO
+    const response = stub.fetch(.{ .text = "https://do/join" }, null);
+    defer response.free();
+
+    // Forward the response
+    ctx.send(&response);
+}
+```
+
+### Creating Durable Object IDs
+
+```zig
+fn createDOIds(namespace: *workers.DurableObjectNamespace) void {
+    // By name (deterministic - same name always = same DO)
+    const byName = namespace.idFromName("user:123");
+    defer byName.free();
+
+    // From stored string (restore from database/KV)
+    const fromString = namespace.idFromString("abc123hex...");
+    defer fromString.free();
+
+    // New unique ID (random, globally unique)
+    const unique = namespace.newUniqueId(.{});
+    defer unique.free();
+
+    // New unique ID with jurisdiction (data locality)
+    const euId = namespace.newUniqueId(.{ .jurisdiction = "eu" });
+    defer euId.free();
+
+    // Get string representation for storage
+    const idString = byName.toString();
+    // Store idString in KV/D1 for later use
+    _ = idString;
+}
+```
+
+### Sending Requests to a Durable Object
+
+```zig
+fn callDO(stub: *workers.DurableObjectStub) void {
+    // Simple GET
+    const getRes = stub.fetch(.{ .text = "https://do/status" }, null);
+    defer getRes.free();
+
+    // POST with JSON body
+    const body = workers.String.new("{\"action\":\"increment\"}");
+    defer body.free();
+
+    const headers = workers.Headers.new();
+    defer headers.free();
+    headers.setText("Content-Type", "application/json");
+
+    const postRes = stub.fetch(.{ .text = "https://do/counter" }, .{
+        .requestInit = .{
+            .method = .Post,
+            .body = .{ .string = &body },
+            .headers = headers,
+        },
+    });
+    defer postRes.free();
+
+    // Convenience method
+    const simpleGet = stub.get("https://do/data");
+    defer simpleGet.free();
+}
+```
+
+### Durable Object Storage
+
+Inside a Durable Object, use storage for persistent data:
+
+```zig
+fn handleInDO(state: *workers.DurableObjectState) void {
+    const storage = state.storage();
+    defer storage.free();
+
+    // Get values
+    if (storage.getText("counter")) |value| {
+        _ = value;
+    }
+
+    // Get as typed struct
+    const Config = struct { theme: []const u8, count: u32 };
+    if (storage.getJSON(Config, "config")) |config| {
+        _ = config.theme;
+    }
+
+    // Put values
+    storage.putText("counter", "42");
+    storage.putNum("visits", u64, 100);
+
+    // Delete
+    _ = storage.delete("old-key");
+    storage.deleteAll(); // Clear everything
+
+    // List with options
+    var entries = storage.list(.{
+        .prefix = "user:",
+        .limit = 100,
+        .reverse = false,
+    });
+    defer entries.free();
+}
+```
+
+### Durable Object Alarms
+
+Schedule code to run at a specific time:
+
+```zig
+fn setupAlarm(state: *workers.DurableObjectState) void {
+    // Set alarm for 1 hour from now (Unix ms)
+    const oneHour: u64 = 60 * 60 * 1000;
+    const now = @as(u64, @intFromFloat(std.time.timestamp() * 1000));
+    state.setAlarm(now + oneHour);
+
+    // Check current alarm
+    if (state.getAlarm()) |scheduledTime| {
+        _ = scheduledTime;
+    }
+
+    // Cancel alarm
+    state.deleteAlarm();
+}
+```
+
+### WebSocket Hibernation (Durable Objects)
+
+For WebSockets in Durable Objects, use hibernation for efficiency:
+
+```zig
+fn acceptHibernatingWebSocket(state: *workers.DurableObjectState, ws: *workers.WebSocket) void {
+    // Accept with optional tags for filtering
+    state.acceptWebSocket(ws, &.{ "room:lobby", "user:123" });
+
+    // Get all WebSockets
+    var allWs = state.getWebSockets(null);
+    defer allWs.free();
+    while (allWs.next()) |socket| {
+        defer socket.free();
+        socket.sendText("broadcast message");
+    }
+
+    // Get WebSockets by tag
+    var roomWs = state.getWebSockets("room:lobby");
+    defer roomWs.free();
+    while (roomWs.next()) |socket| {
+        defer socket.free();
+        socket.sendText("room message");
+    }
+}
+
+fn attachData(ws: *workers.WebSocket) void {
+    // Attach data that survives hibernation
+    const data = workers.Object.new();
+    defer data.free();
+    data.setText("userId", "user123");
+    ws.serializeAttachment(&data);
+
+    // Retrieve after hibernation
+    if (ws.deserializeAttachment()) |attachment| {
+        defer attachment.free();
+        _ = attachment.get("userId");
+    }
+}
+```
+
+### Configuration
+
+```toml
+# wrangler.toml
+[[durable_objects.bindings]]
+name = "MY_DO"
+class_name = "MyDurableObject"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["MyDurableObject"]
+```
+
 ## Workers AI
 
 ```zig
