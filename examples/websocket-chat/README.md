@@ -142,6 +142,36 @@ websocat ws://localhost:8787/ws
 - **ChatRoom DO**: Manages WebSocket connections, broadcasts messages, persists to storage
 - **DO Storage**: Stores last 100 messages for history
 
+## React Client
+
+A React + Tailwind CSS client is included for a full chat experience.
+
+### Setup
+
+```bash
+# Terminal 1: Run the worker
+cd examples/websocket-chat
+npm install
+npm run dev
+
+# Terminal 2: Run the client
+cd examples/websocket-chat/client
+npm install
+npm run dev
+```
+
+The client runs on `http://localhost:3000` and proxies WebSocket connections to the worker on port 8787.
+
+### Configuration
+
+Copy `.env.example` to `.env` to customize the WebSocket URL:
+
+```bash
+cp .env.example .env
+```
+
+For production, set `VITE_WS_URL` to your deployed worker's WebSocket endpoint.
+
 ## Project Structure
 
 ```
@@ -154,6 +184,14 @@ websocket-chat/
 │   ├── main.zig        # Zig worker (routing)
 │   ├── index.ts        # TypeScript runtime + ChatRoom DO
 │   └── wasm.d.ts       # WASM type declarations
+├── client/             # React chat client
+│   ├── src/
+│   │   ├── App.tsx     # Main chat UI component
+│   │   ├── hooks/
+│   │   │   └── useChat.ts  # WebSocket connection hook
+│   │   └── ...
+│   ├── package.json
+│   └── vite.config.ts
 └── README.md           # This file
 ```
 
