@@ -117,10 +117,14 @@ fn handleRegister(ctx: *FetchContext) void {
     };
     defer db.free();
 
-    _ = db.execute(
+    if (db.execute(
         "INSERT INTO users (id, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
         .{ user_id, email, hashed.toString(), now, now },
-    );
+    ) == null) {
+        // Insert failed - likely duplicate email (UNIQUE constraint)
+        ctx.json(.{ .@"error" = "Email already registered" }, 409);
+        return;
+    }
 
     auth.log.event(.account_created, email, .{
         .ip = ctx.header("CF-Connecting-IP") orelse "unknown",

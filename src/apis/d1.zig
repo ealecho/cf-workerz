@@ -293,7 +293,8 @@ pub const D1Database = struct {
 
     /// Execute an INSERT, UPDATE, or DELETE statement and return affected row count.
     ///
-    /// Use this for write operations that don't return data.
+    /// Use this for write operations that don't return data. Returns `null` if the
+    /// query failed (e.g., constraint violation, syntax error).
     ///
     /// ## Parameters
     ///
@@ -302,26 +303,33 @@ pub const D1Database = struct {
     ///
     /// ## Returns
     ///
-    /// The number of rows affected by the operation.
+    /// The number of rows affected, or `null` if the query failed.
     ///
     /// ## Example
     ///
     /// ```zig
-    /// // Insert a new user
-    /// _ = db.execute("INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email });
+    /// // Insert a new user (check for failure)
+    /// if (db.execute("INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email })) |_| {
+    ///     ctx.json(.{ .success = true }, 201);
+    /// } else {
+    ///     ctx.json(.{ .@"error" = "Insert failed" }, 500);
+    /// }
     ///
     /// // Update users
-    /// const updated = db.execute("UPDATE users SET active = ? WHERE role = ?", .{ true, "admin" });
+    /// const updated = db.execute("UPDATE users SET active = ? WHERE role = ?", .{ true, "admin" }) orelse 0;
     ///
     /// // Delete inactive users
-    /// const deleted = db.execute("DELETE FROM users WHERE active = ?", .{false});
+    /// const deleted = db.execute("DELETE FROM users WHERE active = ?", .{false}) orelse 0;
     /// ctx.json(.{ .deleted = deleted }, 200);
     /// ```
-    pub fn execute(self: *const D1Database, sql: []const u8, params: anytype) u64 {
+    /// Execute an INSERT, UPDATE, or DELETE statement and return the number of affected rows.
+    /// Returns null if the query failed (e.g., constraint violation, syntax error).
+    pub fn execute(self: *const D1Database, sql: []const u8, params: anytype) ?u64 {
         const stmt = self.prepare(sql);
         const bound = bindParams(&stmt, params);
         const result = bound.run();
         defer result.free();
+        if (!result.success()) return null;
         return result.changes();
     }
 };

@@ -636,8 +636,8 @@ fn handleUsers(ctx: *FetchContext) void {
         return;
     }
 
-    // Execute INSERT/UPDATE/DELETE -> affected rows
-    const deleted = db.execute("DELETE FROM users WHERE active = ?", .{false});
+    // Execute INSERT/UPDATE/DELETE -> affected rows (null on failure)
+    const deleted = db.execute("DELETE FROM users WHERE active = ?", .{false}) orelse 0;
     ctx.json(.{ .deleted = deleted }, 200);
 }
 ```
@@ -1849,10 +1849,13 @@ fn handleRegister(ctx: *FetchContext) void {
 
     const user_id = workers.apis.randomUUID();
     const now = @as(u64, @intFromFloat(Date.now() / 1000.0));
-    _ = db.execute(
+    if (db.execute(
         "INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
         .{ user_id, email, hashed.toString(), now },
-    );
+    ) == null) {
+        ctx.json(.{ .@"error" = "Email already registered" }, 409);
+        return;
+    }
 
     ctx.json(.{ .success = true, .userId = user_id }, 201);
 }
@@ -1967,7 +1970,10 @@ fn createUser(ctx: *FetchContext) void {
     };
     defer db.free();
 
-    _ = db.execute("INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email });
+    if (db.execute("INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email }) == null) {
+        ctx.json(.{ .@"error" = "Insert failed" }, 500);
+        return;
+    }
     ctx.json(.{ .created = true }, 201);
 }
 ```
