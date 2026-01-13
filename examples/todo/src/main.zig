@@ -187,42 +187,45 @@ fn handleListTodos(ctx: *FetchContext) void {
     }
 }
 
-/// Helper to send todo list response
+/// Helper to send todo list response - production-style JSON array serialization
 fn sendTodoList(ctx: *FetchContext, result: anytype) void {
     switch (result.*) {
         .rows => |*rows| {
             const count = rows.count();
-            // Note: In a real app, you'd serialize the full list
-            // For this example, we return the count and first few items
-            var items: [10]Todo = undefined;
-            var i: usize = 0;
+
+            // Build JSON array of todos
+            const todosArray = workers.Array.new();
+            defer todosArray.free();
+
             while (rows.next()) |todo| {
-                if (i < 10) {
-                    items[i] = todo;
-                    i += 1;
+                // Create a JSON object for each todo
+                const todoObj = workers.Object.new();
+                defer todoObj.free();
+
+                todoObj.setNum("id", u32, todo.id);
+                todoObj.setText("title", todo.title);
+                if (todo.description) |desc| {
+                    todoObj.setText("description", desc);
                 }
+                todoObj.setBool("completed", todo.completed == 1);
+                todoObj.setText("priority", todo.priority);
+                todoObj.setNum("createdAt", u64, todo.created_at);
+                todoObj.setNum("updatedAt", u64, todo.updated_at);
+
+                // Push the object to the array
+                todosArray.push(&todoObj);
             }
 
-            if (i == 0) {
-                ctx.json(.{
-                    .todos = &[_]Todo{},
-                    .count = count,
-                    .message = "No todos found",
-                }, 200);
-            } else {
-                // Return first todo as sample
-                const first = items[0];
-                ctx.json(.{
-                    .count = count,
-                    .sample = .{
-                        .id = first.id,
-                        .title = first.title,
-                        .completed = first.completed == 1,
-                        .priority = first.priority,
-                    },
-                    .message = "Use GET /todos/:id to fetch individual todos",
-                }, 200);
-            }
+            // Build response object
+            const response = workers.Object.new();
+            defer response.free();
+            response.setArray("todos", &todosArray);
+            response.setNum("count", u32, count);
+
+            // Stringify and send
+            const jsonStr = response.stringify();
+            defer jsonStr.free();
+            ctx.json(jsonStr.value(), 200);
         },
         .empty => {
             ctx.json(.{

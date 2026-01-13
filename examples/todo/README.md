@@ -48,6 +48,23 @@ GET /todos?completed=false
 GET /todos?priority=high
 GET /todos?completed=false&priority=high
 ```
+Returns:
+```json
+{
+  "todos": [
+    {
+      "id": 1,
+      "title": "Learn Zig",
+      "description": "Complete the Zig tutorial",
+      "completed": false,
+      "priority": "high",
+      "createdAt": 1736780400,
+      "updatedAt": 1736780400
+    }
+  ],
+  "count": 1
+}
+```
 
 ### Get Todo
 ```bash

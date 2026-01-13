@@ -9,6 +9,7 @@ command = "zig build"
 [[rules]]
 type = "CompiledWasm"
 globs = ["**/*.wasm"]
+fallthrough = false
 
 [[d1_databases]]
 binding = "DB"
