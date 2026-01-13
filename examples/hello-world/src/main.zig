@@ -3,7 +3,7 @@
 // This example demonstrates:
 // - Built-in Router with path parameters and wildcards
 // - Middleware support (before/after hooks)
-// - Ergonomic D1 API (query, one, execute) with struct mapping
+// - Unified D1 run() API with tagged union results
 // - JsonBody for parsing JSON request bodies
 // - ctx.json() with automatic struct serialization
 // - Response helpers (ctx.text, ctx.redirect, ctx.throw, ctx.bytes, ctx.file, ctx.stream)
@@ -18,11 +18,11 @@
 //   POST /echo                - Echo JSON body back
 //
 // D1 Endpoints (requires D1 binding):
-//   POST /setup               - Create users table
-//   GET  /users               - List all users (ergonomic query)
-//   GET  /users/:id           - Get single user (ergonomic one)
-//   POST /users               - Create user (JsonBody + execute)
-//   DELETE /users/:id         - Delete user (execute)
+//   POST /setup               - Create users table (run with .empty)
+//   GET  /users               - List all users (run with .rows)
+//   GET  /users/:id           - Get single user (run with .rows)
+//   POST /users               - Create user (run with .command)
+//   DELETE /users/:id         - Delete user (run with .command)
 //
 // Test Endpoints (URL/FormData APIs):
 //   GET  /test/url            - Test URL parsing and manipulation
@@ -218,19 +218,24 @@ fn handleSetup(ctx: *FetchContext) void {
     };
     defer db.free();
 
-    // Use db.execute() for DDL statements
-    _ = db.execute(
+    // Use db.run() for DDL statements -> returns .empty on success
+    var result = db.run(void,
         \\CREATE TABLE IF NOT EXISTS users (
         \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
         \\  name TEXT NOT NULL,
         \\  email TEXT NOT NULL UNIQUE
         \\)
     , .{});
+    defer result.deinit();
 
-    ctx.json(.{
-        .success = true,
-        .message = "Users table created",
-    }, 200);
+    if (result.isOk()) {
+        ctx.json(.{
+            .success = true,
+            .message = "Users table created",
+        }, 200);
+    } else {
+        ctx.json(.{ .err = "Failed to create table" }, 500);
+    }
 }
 
 fn handleListUsers(ctx: *FetchContext) void {
@@ -240,21 +245,22 @@ fn handleListUsers(ctx: *FetchContext) void {
     };
     defer db.free();
 
-    // Ergonomic query with struct mapping
-    var users = db.query(User, "SELECT id, name, email FROM users LIMIT 100", .{});
-    defer users.deinit();
+    // Use db.run() with .rows for SELECT queries
+    var result = db.run(User, "SELECT id, name, email FROM users LIMIT 100", .{});
+    defer result.deinit();
 
-    // Collect users into response
-    // Note: In production, you'd use a proper JSON array builder
-    var count: u32 = 0;
-    while (users.next()) |_| {
-        count += 1;
+    switch (result) {
+        .rows => |*rows| {
+            const count = rows.count();
+            ctx.json(.{
+                .count = count,
+                .message = "Use GET /users/:id to fetch individual users",
+            }, 200);
+        },
+        else => {
+            ctx.json(.{ .err = "Failed to list users" }, 500);
+        },
     }
-
-    ctx.json(.{
-        .count = count,
-        .message = "Use GET /users/:id to fetch individual users",
-    }, 200);
 }
 
 fn handleGetUser(ctx: *FetchContext) void {
@@ -275,8 +281,14 @@ fn handleGetUser(ctx: *FetchContext) void {
         return;
     };
 
-    // Ergonomic one() for single row with inline params
-    const user = db.one(User, "SELECT id, name, email FROM users WHERE id = ?", .{id});
+    // Use db.run() for single row SELECT
+    var result = db.run(User, "SELECT id, name, email FROM users WHERE id = ?", .{id});
+    defer result.deinit();
+
+    const user = switch (result) {
+        .rows => |*rows| rows.next(),
+        else => null,
+    };
 
     if (user) |u| {
         ctx.json(.{
@@ -314,21 +326,27 @@ fn handleCreateUser(ctx: *FetchContext) void {
         return;
     };
 
-    // Ergonomic execute() with inline params
-    const affected = db.execute(
-        "INSERT INTO users (name, email) VALUES (?, ?)",
-        .{ name, email },
-    );
+    // Use db.run() for INSERT -> returns .command with changes and last_row_id
+    var result = db.run(void, "INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email });
+    defer result.deinit();
 
-    if (affected > 0) {
-        ctx.json(.{
-            .success = true,
-            .message = "User created",
-            .name = name,
-            .email = email,
-        }, 201);
-    } else {
-        ctx.json(.{ .err = "Failed to create user (email may already exist)" }, 400);
+    switch (result) {
+        .command => |cmd| {
+            if (cmd.changes > 0) {
+                ctx.json(.{
+                    .success = true,
+                    .message = "User created",
+                    .id = cmd.last_row_id,
+                    .name = name,
+                    .email = email,
+                }, 201);
+            } else {
+                ctx.json(.{ .err = "Failed to create user" }, 500);
+            }
+        },
+        else => {
+            ctx.json(.{ .err = "Failed to create user (email may already exist)" }, 400);
+        },
     }
 }
 
@@ -349,10 +367,11 @@ fn handleDeleteUser(ctx: *FetchContext) void {
         return;
     };
 
-    // Ergonomic execute() for DELETE
-    const affected = db.execute("DELETE FROM users WHERE id = ?", .{id});
+    // Use db.run() for DELETE -> returns .command with changes
+    var result = db.run(void, "DELETE FROM users WHERE id = ?", .{id});
+    defer result.deinit();
 
-    if (affected > 0) {
+    if (result.changes() > 0) {
         ctx.json(.{ .success = true, .deleted = id }, 200);
     } else {
         ctx.json(.{ .err = "User not found" }, 404);

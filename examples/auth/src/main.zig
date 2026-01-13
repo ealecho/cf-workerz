@@ -117,10 +117,11 @@ fn handleRegister(ctx: *FetchContext) void {
     };
     defer db.free();
 
-    if (db.execute(
-        "INSERT INTO users (id, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-        .{ user_id, email, hashed.toString(), now, now },
-    ) == null) {
+    // Use the unified run() API for INSERT
+    var result = db.run(void, "INSERT INTO users (id, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", .{ user_id, email, hashed.toString(), now, now });
+    defer result.deinit();
+
+    if (!result.isOk()) {
         // Insert failed - likely duplicate email (UNIQUE constraint)
         ctx.json(.{ .err = "Email already registered" }, 409);
         return;
@@ -174,7 +175,7 @@ fn handleLogin(ctx: *FetchContext) void {
         return;
     };
 
-    // Get user from database
+    // Get user from database using the unified run() API
     const db = ctx.env.d1("DB") orelse {
         ctx.json(.{ .err = "Database not configured" }, 500);
         return;
@@ -187,7 +188,13 @@ fn handleLogin(ctx: *FetchContext) void {
         password_hash: []const u8,
     };
 
-    const user = db.one(User, "SELECT id, email, password_hash FROM users WHERE email = ?", .{email}) orelse {
+    var result = db.run(User, "SELECT id, email, password_hash FROM users WHERE email = ?", .{email});
+    defer result.deinit();
+
+    const user = switch (result) {
+        .rows => |*rows| rows.next(),
+        else => null,
+    } orelse {
         // OWASP: Same error message for user not found
         auth.log.event(.login_failed, "User not found", .{ .ip = ip, .path = "/api/login" });
         ctx.json(.{ .err = "Invalid email or password" }, 401);
@@ -277,7 +284,7 @@ fn handleMe(ctx: *FetchContext) void {
         return;
     };
 
-    // Get user from database
+    // Get user from database using the unified run() API
     const db = ctx.env.d1("DB") orelse {
         ctx.json(.{ .err = "Database not configured" }, 500);
         return;
@@ -290,7 +297,13 @@ fn handleMe(ctx: *FetchContext) void {
         created_at: u64,
     };
 
-    const user = db.one(User, "SELECT id, email, created_at FROM users WHERE id = ?", .{user_id}) orelse {
+    var result = db.run(User, "SELECT id, email, created_at FROM users WHERE id = ?", .{user_id});
+    defer result.deinit();
+
+    const user = switch (result) {
+        .rows => |*rows| rows.next(),
+        else => null,
+    } orelse {
         ctx.json(.{ .err = "User not found" }, 404);
         return;
     };

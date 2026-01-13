@@ -605,7 +605,9 @@ fn writeToStream() void {
 
 ## D1 Database
 
-### Ergonomic API (Recommended)
+### Ergonomic API
+
+Simple convenience methods for common operations:
 
 ```zig
 const User = struct {
@@ -1840,12 +1842,19 @@ fn handleLogin(ctx: *FetchContext) void {
         return;
     };
 
-    // Get user from database
+    // Get user from database using run() API
     const db = ctx.env.d1("DB") orelse return;
     defer db.free();
 
     const User = struct { id: []const u8, password_hash: []const u8 };
-    const user = db.one(User, "SELECT id, password_hash FROM users WHERE email = ?", .{email}) orelse {
+    
+    var result = db.run(User, "SELECT id, password_hash FROM users WHERE email = ?", .{email});
+    defer result.deinit();
+    
+    const user = switch (result) {
+        .rows => |*rows| rows.next(),
+        else => null,
+    } orelse {
         ctx.json(.{ .err = "Invalid credentials" }, 401);
         return;
     };
@@ -1935,16 +1944,19 @@ fn handleRegister(ctx: *FetchContext) void {
     };
     defer hashed.deinit();
 
-    // Store in database
+    // Store in database using run() API
     const db = ctx.env.d1("DB") orelse return;
     defer db.free();
 
     const user_id = workers.apis.randomUUID();
     const now = @as(u64, @intFromFloat(Date.now() / 1000.0));
-    if (db.execute(
+    var result = db.run(void,
         "INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
         .{ user_id, email, hashed.toString(), now },
-    ) == null) {
+    );
+    defer result.deinit();
+    
+    if (!result.isOk()) {
         ctx.json(.{ .err = "Email already registered" }, 409);
         return;
     }
@@ -2036,8 +2048,17 @@ fn getUser(ctx: *FetchContext) void {
     };
     defer db.free();
 
-    if (db.one(User, "SELECT * FROM users WHERE id = ?", .{id})) |user| {
-        ctx.json(.{ .id = user.id, .name = user.name, .email = user.email }, 200);
+    // Use run() for SELECT -> .rows
+    var result = db.run(User, "SELECT * FROM users WHERE id = ?", .{id});
+    defer result.deinit();
+
+    const user = switch (result) {
+        .rows => |*rows| rows.next(),
+        else => null,
+    };
+
+    if (user) |u| {
+        ctx.json(.{ .id = u.id, .name = u.name, .email = u.email }, 200);
     } else {
         ctx.json(.{ .err = "Not found" }, 404);
     }
@@ -2062,11 +2083,18 @@ fn createUser(ctx: *FetchContext) void {
     };
     defer db.free();
 
-    if (db.execute("INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email }) == null) {
-        ctx.json(.{ .err = "Insert failed" }, 500);
-        return;
+    // Use run() for INSERT -> .command
+    var result = db.run(void, "INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email });
+    defer result.deinit();
+
+    switch (result) {
+        .command => |cmd| {
+            ctx.json(.{ .created = true, .id = cmd.last_row_id }, 201);
+        },
+        else => {
+            ctx.json(.{ .err = "Insert failed" }, 500);
+        },
     }
-    ctx.json(.{ .created = true }, 201);
 }
 ```
 
