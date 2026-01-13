@@ -1,0 +1,15 @@
+.{
+    .name = .todo_example,
+    .version = "0.1.0",
+    .fingerprint = 0xbbe551ee2b77208a,
+    .dependencies = .{
+        .cf_workerz = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

@@ -1,0 +1,14 @@
+{
+  "name": "todo-api",
+  "version": "1.0.0",
+  "description": "Todo API example demonstrating the D1 unified run() API with cf-workerz",
+  "scripts": {
+    "build": "zig build",
+    "dev": "wrangler dev --local --port 8787",
+    "setup-db": "wrangler d1 execute DB --local --file=schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^3.99.0",
+    "@cloudflare/workers-types": "^4.20241230.0"
+  }
+}
