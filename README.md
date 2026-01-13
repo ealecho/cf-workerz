@@ -2396,6 +2396,10 @@ These features are complete and production-ready:
 | File | ✅ | ✅ | name, size, type, lastModified, text, bytes |
 | **Rate Limiting** | | | |
 | Rate Limiter | ✅ | ✅ | limit() with per-location enforcement |
+| **Authentication** | | | |
+| Password Hashing | ➖ | ✅ | PBKDF2-HMAC-SHA256, OWASP-compliant (600K iterations) |
+| JWT (HS256) | ➖ | ✅ | Create, verify, claims validation, clock skew |
+| Auth Logging | ➖ | ✅ | Event logging for login, auth, rate limit events |
 
 ---
 

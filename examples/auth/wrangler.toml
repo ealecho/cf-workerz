@@ -1,0 +1,39 @@
+# cf-workerz Auth Example Configuration
+# See: https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name = "auth-example"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Build command - Zig compiles to WASM
+[build]
+command = "zig build"
+
+# WASM module handling
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = false
+
+# D1 Database for user storage
+# Run: npx wrangler d1 create auth-db
+[[d1_databases]]
+binding = "DB"
+database_name = "auth-db"
+database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Rate Limiting for login attempts
+[[unsafe.bindings]]
+name = "LOGIN_LIMITER"
+type = "ratelimit"
+namespace_id = "1002"
+simple = { limit = 5, period = 60 }
+
+# Environment Variables
+[vars]
+JWT_ISSUER = "auth-example"
+JWT_AUDIENCE = "api.auth-example.com"
+
+# Secrets (set via: npx wrangler secret put JWT_SECRET)
+# JWT_SECRET = "your-256-bit-secret-key"

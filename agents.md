@@ -1707,6 +1707,219 @@ pub fn build(b: *std.Build) void {
 
 ## Common Patterns
 
+### Authentication Handler
+
+```zig
+const std = @import("std");
+const workers = @import("cf-workerz");
+const auth = workers.auth;
+const FetchContext = workers.FetchContext;
+const Date = workers.Date;
+
+const allocator = std.heap.page_allocator;
+const JWT_SECRET = "your-256-bit-secret";
+const JWT_ISSUER = "my-app";
+const JWT_AUDIENCE = "api.myapp.com";
+
+fn handleLogin(ctx: *FetchContext) void {
+    // Rate limit check
+    const ip = ctx.header("CF-Connecting-IP") orelse "unknown";
+    if (ctx.env.rateLimiter("LOGIN_LIMITER")) |limiter| {
+        defer limiter.free();
+        if (!limiter.limit(ip).success) {
+            ctx.json(.{ .@"error" = "Too many attempts" }, 429);
+            return;
+        }
+    }
+
+    // Parse credentials
+    var json = ctx.bodyJson() orelse {
+        ctx.json(.{ .@"error" = "Invalid JSON" }, 400);
+        return;
+    };
+    defer json.deinit();
+
+    const email = json.getString("email") orelse {
+        ctx.json(.{ .@"error" = "Email required" }, 400);
+        return;
+    };
+    const password = json.getString("password") orelse {
+        ctx.json(.{ .@"error" = "Password required" }, 400);
+        return;
+    };
+
+    // Get user from database
+    const db = ctx.env.d1("DB") orelse return;
+    defer db.free();
+
+    const User = struct { id: []const u8, password_hash: []const u8 };
+    const user = db.one(User, "SELECT id, password_hash FROM users WHERE email = ?", .{email}) orelse {
+        ctx.json(.{ .@"error" = "Invalid credentials" }, 401);
+        return;
+    };
+
+    // Verify password
+    const valid = auth.verifyPassword(allocator, password, user.password_hash) catch {
+        ctx.json(.{ .@"error" = "Invalid credentials" }, 401);
+        return;
+    };
+    if (!valid) {
+        ctx.json(.{ .@"error" = "Invalid credentials" }, 401);
+        return;
+    }
+
+    // Generate JWT
+    const now = @as(u64, @intFromFloat(Date.now() / 1000.0));
+    const token = auth.jwt.create(allocator, .{
+        .sub = user.id,
+        .iss = JWT_ISSUER,
+        .aud = JWT_AUDIENCE,
+        .exp = now + 3600,
+        .iat = now,
+    }, JWT_SECRET, .{}) catch {
+        ctx.json(.{ .@"error" = "Token generation failed" }, 500);
+        return;
+    };
+    defer token.deinit();
+
+    ctx.json(.{ .token = token.toString(), .expiresIn = 3600 }, 200);
+}
+
+fn handleProtected(ctx: *FetchContext) void {
+    const auth_header = ctx.header("Authorization") orelse {
+        ctx.json(.{ .@"error" = "Unauthorized" }, 401);
+        return;
+    };
+
+    // Extract Bearer token
+    const token = if (std.mem.startsWith(u8, auth_header, "Bearer "))
+        auth_header[7..]
+    else {
+        ctx.json(.{ .@"error" = "Invalid format" }, 401);
+        return;
+    };
+
+    // Verify JWT
+    const claims = auth.jwt.verify(allocator, token, JWT_SECRET, .{
+        .issuer = JWT_ISSUER,
+        .audience = JWT_AUDIENCE,
+    }) catch {
+        ctx.json(.{ .@"error" = "Invalid token" }, 401);
+        return;
+    };
+    defer claims.deinit();
+
+    const user_id = claims.sub orelse {
+        ctx.json(.{ .@"error" = "Invalid token" }, 401);
+        return;
+    };
+
+    ctx.json(.{ .userId = user_id, .message = "Authenticated!" }, 200);
+}
+
+fn handleRegister(ctx: *FetchContext) void {
+    var json = ctx.bodyJson() orelse return;
+    defer json.deinit();
+
+    const email = json.getString("email") orelse return;
+    const password = json.getString("password") orelse return;
+
+    // Hash password (OWASP-compliant)
+    const hashed = auth.hashPassword(allocator, password, .{
+        .weakPasswordList = &.{ "password", "12345678", "password123" },
+    }) catch |err| {
+        switch (err) {
+            auth.PasswordError.WeakPassword => {
+                ctx.json(.{ .@"error" = "Password too common" }, 400);
+            },
+            auth.PasswordError.PasswordTooShort => {
+                ctx.json(.{ .@"error" = "Password too short" }, 400);
+            },
+            else => {
+                ctx.json(.{ .@"error" = "Registration failed" }, 500);
+            },
+        }
+        return;
+    };
+    defer hashed.deinit();
+
+    // Store in database
+    const db = ctx.env.d1("DB") orelse return;
+    defer db.free();
+
+    const user_id = workers.apis.randomUUID();
+    const now = @as(u64, @intFromFloat(Date.now() / 1000.0));
+    _ = db.execute(
+        "INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+        .{ user_id, email, hashed.toString(), now },
+    );
+
+    ctx.json(.{ .success = true, .userId = user_id }, 201);
+}
+```
+
+### Password Hashing
+
+```zig
+const auth = @import("cf-workerz").auth;
+
+// Hash a password (PBKDF2-HMAC-SHA256, 600K iterations)
+const hash = try auth.hashPassword(allocator, "password", .{
+    .iterations = 600_000,  // OWASP 2024 minimum
+    .weakPasswordList = &.{ "password", "123456" },
+});
+defer hash.deinit();
+
+// Store hash.toString() in database
+// Format: "base64salt$iterations$base64hash"
+
+// Verify a password
+const valid = try auth.verifyPassword(allocator, "password", stored_hash);
+```
+
+### JWT Creation and Verification
+
+```zig
+const jwt = @import("cf-workerz").auth.jwt;
+
+// Create token
+const token = try jwt.create(allocator, .{
+    .sub = "user123",
+    .iss = "my-app",
+    .aud = "api.myapp.com",
+    .exp = now + 3600,  // 1 hour
+    .iat = now,
+}, secret, .{});
+defer token.deinit();
+
+// Verify token
+const claims = try jwt.verify(allocator, token_str, secret, .{
+    .issuer = "my-app",
+    .audience = "api.myapp.com",
+    .clockSkewSeconds = 60,
+});
+defer claims.deinit();
+
+// Access claims
+const user_id = claims.sub orelse "unknown";
+```
+
+### Auth Event Logging
+
+```zig
+const auth = @import("cf-workerz").auth;
+
+// Log authentication events
+auth.log.event(.login_success, "user@example.com", .{
+    .ip = ctx.header("CF-Connecting-IP") orelse "unknown",
+    .path = "/api/login",
+});
+
+// Available event types:
+// .login_success, .login_failed, .auth_success, .auth_failed,
+// .rate_limited, .password_changed, .logout, .account_created, .account_locked
+```
+
 ### CRUD Handler
 
 ```zig

@@ -1,0 +1,17 @@
+.{
+    .name = .auth_example,
+    .fingerprint = 0x20c8bb6c060f4f30,
+    .version = "0.1.0",
+
+    .dependencies = .{
+        .cf_workerz = .{
+            .path = "../..",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

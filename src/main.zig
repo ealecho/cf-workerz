@@ -161,6 +161,7 @@ pub const WritableStreamDefaultWriter = bindings.WritableStreamDefaultWriter;
 pub const PipeToOptions = bindings.PipeToOptions;
 pub const PipeThroughOptions = bindings.PipeThroughOptions;
 pub const ReadResult = bindings.ReadResult;
+pub const Date = bindings.Date;
 
 // Re-export HTTP types
 pub const http = @import("http/main.zig");
@@ -189,6 +190,12 @@ pub const MAX_PARAMS = router.MAX_PARAMS;
 pub const Middleware = router.Middleware;
 pub const MiddlewareFn = router.MiddlewareFn;
 pub const MAX_MIDDLEWARE = router.MAX_MIDDLEWARE;
+
+// Re-export auth module
+pub const auth = @import("auth/main.zig");
+
+// Re-export base64 utilities
+pub const base64 = @import("utils/base64.zig");
 
 // ** EXPORTS **
 

@@ -164,3 +164,7 @@ pub const WritableStreamDefaultWriter = streams.WritableStreamDefaultWriter;
 pub const PipeToOptions = streams.PipeToOptions;
 pub const PipeThroughOptions = streams.PipeThroughOptions;
 pub const ReadResult = streams.ReadResult;
+
+// date.zig exports
+pub const date = @import("date.zig");
+pub const Date = date.Date;
