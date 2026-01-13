@@ -6,6 +6,12 @@ zig-cache/
 # Node modules
 node_modules/
 
+# Lock files
+package-lock.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+yarn.lock
+
 # IDE
 .vscode/
 .idea/
