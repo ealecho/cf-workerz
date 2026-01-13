@@ -1,0 +1,17 @@
+.{
+    .name = .d1_test_example,
+    .fingerprint = 0xcecaedd9a918d880,
+    .version = "0.1.0",
+
+    .dependencies = .{
+        .cf_workerz = .{
+            .path = "../..",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

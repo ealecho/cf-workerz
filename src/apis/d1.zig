@@ -332,7 +332,301 @@ pub const D1Database = struct {
         if (!result.success()) return null;
         return result.changes();
     }
+
+    // ========================================================================
+    // Unified Query API (zpg-inspired)
+    // ========================================================================
+
+    /// Execute any SQL statement and return a tagged union result.
+    ///
+    /// This unified API handles all query types (SELECT, INSERT, UPDATE, DELETE, DDL)
+    /// with a single method, returning a discriminated union that indicates the
+    /// result type. Inspired by zpg's query result design.
+    ///
+    /// ## Result Types
+    ///
+    /// - `.rows` - SELECT query returned rows (use iterator)
+    /// - `.command` - INSERT/UPDATE/DELETE affected rows (includes count and last_row_id)
+    /// - `.empty` - DDL or query with no results (CREATE, DROP, etc.)
+    /// - `.err` - Query failed (constraint violation, syntax error, etc.)
+    ///
+    /// ## Parameters
+    ///
+    /// - `T`: The struct type to map result rows to (use `void` for non-SELECT queries).
+    /// - `sql`: The SQL statement with `?` placeholders.
+    /// - `params`: A tuple of parameter values to bind.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const User = struct { id: u32, name: []const u8, email: []const u8 };
+    ///
+    /// // SELECT query
+    /// var result = db.run(User, "SELECT * FROM users WHERE active = ?", .{true});
+    /// defer result.deinit();
+    /// switch (result) {
+    ///     .rows => |*rows| {
+    ///         while (rows.next()) |user| {
+    ///             // process user
+    ///         }
+    ///     },
+    ///     .err => ctx.json(.{ .err = "Query failed" }, 500),
+    ///     else => {},
+    /// }
+    ///
+    /// // INSERT query
+    /// var insert = db.run(void, "INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email });
+    /// defer insert.deinit();
+    /// switch (insert) {
+    ///     .command => |cmd| {
+    ///         ctx.json(.{ .inserted = cmd.changes, .id = cmd.last_row_id }, 201);
+    ///     },
+    ///     .err => ctx.json(.{ .err = "Insert failed" }, 500),
+    ///     else => {},
+    /// }
+    ///
+    /// // DDL query
+    /// var create = db.run(void, "CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY)", .{});
+    /// defer create.deinit();
+    /// switch (create) {
+    ///     .empty => ctx.json(.{ .success = true }, 200),
+    ///     .err => ctx.json(.{ .err = "Create failed" }, 500),
+    ///     else => {},
+    /// }
+    /// ```
+    pub fn run(self: *const D1Database, comptime T: type, sql: []const u8, params: anytype) D1Result(T) {
+        const stmt = self.prepare(sql);
+        const bound = bindParams(&stmt, params);
+        const sql_result = bound.all();
+
+        // Check for query failure
+        if (!sql_result.success()) {
+            sql_result.free();
+            return .err;
+        }
+
+        // Get metadata
+        const changes = sql_result.changes();
+        const last_row_id = sql_result.lastRowId();
+        const duration = sql_result.duration();
+
+        // Check if this is a SELECT (has results) or command (INSERT/UPDATE/DELETE)
+        if (sql_result.results()) |results| {
+            if (results.len > 0) {
+                // SELECT with rows
+                return .{ .rows = D1Rows(T){
+                    .results = results,
+                    .sql_success = sql_result,
+                    .meta = .{
+                        .changes = changes,
+                        .last_row_id = last_row_id,
+                        .duration = duration,
+                    },
+                } };
+            } else {
+                // SELECT with no rows or DDL
+                results.free();
+                if (changes > 0) {
+                    // Was a command (INSERT/UPDATE/DELETE) that returned 0 rows
+                    sql_result.free();
+                    return .{ .command = .{
+                        .changes = changes,
+                        .last_row_id = last_row_id,
+                        .duration = duration,
+                    } };
+                } else {
+                    // DDL or empty SELECT
+                    sql_result.free();
+                    return .{ .empty = .{ .duration = duration } };
+                }
+            }
+        } else {
+            // No results - command or DDL
+            if (changes > 0) {
+                sql_result.free();
+                return .{ .command = .{
+                    .changes = changes,
+                    .last_row_id = last_row_id,
+                    .duration = duration,
+                } };
+            } else {
+                sql_result.free();
+                return .{ .empty = .{ .duration = duration } };
+            }
+        }
+    }
 };
+
+/// Metadata about a command execution (INSERT/UPDATE/DELETE).
+pub const CommandMeta = struct {
+    /// Number of rows affected by the command.
+    changes: u64,
+    /// The rowid of the last inserted row (for INSERT).
+    last_row_id: ?u64,
+    /// Query execution duration in milliseconds.
+    duration: f64,
+};
+
+/// Metadata about an empty result (DDL or empty SELECT).
+pub const EmptyMeta = struct {
+    /// Query execution duration in milliseconds.
+    duration: f64,
+};
+
+/// Tagged union result from `D1Database.run()`.
+///
+/// Represents the result of any SQL query with type-safe discrimination
+/// between different result types.
+///
+/// ## Variants
+///
+/// - `.rows` - SELECT returned data (iterate with `.next()`)
+/// - `.command` - INSERT/UPDATE/DELETE succeeded (access `.changes`, `.last_row_id`)
+/// - `.empty` - DDL succeeded or SELECT returned no rows
+/// - `.err` - Query failed
+///
+/// ## Example
+///
+/// ```zig
+/// var result = db.run(User, "SELECT * FROM users", .{});
+/// defer result.deinit();
+///
+/// switch (result) {
+///     .rows => |*rows| {
+///         while (rows.next()) |user| {
+///             // user.id, user.name, etc.
+///         }
+///     },
+///     .command => |cmd| {
+///         std.debug.print("Affected {d} rows\n", .{cmd.changes});
+///     },
+///     .empty => {
+///         // DDL succeeded or no rows
+///     },
+///     .err => {
+///         // Query failed
+///     },
+/// }
+/// ```
+pub fn D1Result(comptime T: type) type {
+    return union(enum) {
+        /// SELECT query returned rows. Use `.next()` to iterate.
+        rows: D1Rows(T),
+        /// INSERT/UPDATE/DELETE affected rows.
+        command: CommandMeta,
+        /// DDL succeeded or SELECT returned no rows.
+        empty: EmptyMeta,
+        /// Query failed (constraint violation, syntax error, etc.).
+        err: void,
+
+        const Self = @This();
+
+        /// Release all resources. Must be called when done.
+        pub fn deinit(self: *Self) void {
+            switch (self.*) {
+                .rows => |*r| r.deinit(),
+                else => {},
+            }
+        }
+
+        /// Check if the query succeeded (not .err).
+        pub fn isOk(self: *const Self) bool {
+            return self.* != .err;
+        }
+
+        /// Check if the query failed.
+        pub fn isErr(self: *const Self) bool {
+            return self.* == .err;
+        }
+
+        /// Get the number of affected rows (for .command), or 0.
+        pub fn changes(self: *const Self) u64 {
+            return switch (self.*) {
+                .command => |cmd| cmd.changes,
+                else => 0,
+            };
+        }
+
+        /// Get the last inserted row ID (for .command with INSERT), or null.
+        pub fn lastRowId(self: *const Self) ?u64 {
+            return switch (self.*) {
+                .command => |cmd| cmd.last_row_id,
+                else => null,
+            };
+        }
+
+        /// Get the query duration in milliseconds.
+        pub fn duration(self: *const Self) f64 {
+            return switch (self.*) {
+                .rows => |r| r.meta.duration,
+                .command => |cmd| cmd.duration,
+                .empty => |e| e.duration,
+                .err => 0,
+            };
+        }
+    };
+}
+
+/// Row iterator for SELECT query results from `D1Database.run()`.
+///
+/// Maps D1 result rows to Zig structs automatically. Created as part of
+/// `D1Result.rows`.
+///
+/// ## Example
+///
+/// ```zig
+/// var result = db.run(User, "SELECT * FROM users", .{});
+/// defer result.deinit();
+///
+/// switch (result) {
+///     .rows => |*rows| {
+///         // Get count
+///         const total = rows.count();
+///
+///         // Iterate
+///         while (rows.next()) |user| {
+///             // user.id, user.name, user.email
+///         }
+///     },
+///     else => {},
+/// }
+/// ```
+pub fn D1Rows(comptime T: type) type {
+    return struct {
+        results: SQLSuccess.SQLSuccessResults,
+        sql_success: SQLSuccess,
+        meta: struct {
+            changes: u64,
+            last_row_id: ?u64,
+            duration: f64,
+        },
+
+        const Self = @This();
+
+        /// Get the next row mapped to struct T, or null if no more rows.
+        pub fn next(self: *Self) ?T {
+            const row = self.results.next(Object) orelse return null;
+            defer row.free();
+            return mapRowToStruct(T, &row);
+        }
+
+        /// Release all resources. Called automatically by D1Result.deinit().
+        pub fn deinit(self: *Self) void {
+            self.results.free();
+            self.sql_success.free();
+        }
+
+        /// Get the number of rows in the result set.
+        pub fn count(self: *const Self) u32 {
+            return self.results.len;
+        }
+
+        /// Get the query execution duration in milliseconds.
+        pub fn duration(self: *const Self) f64 {
+            return self.meta.duration;
+        }
+    };
+}
 
 /// Result from a batch of SQL statements.
 ///
@@ -909,4 +1203,188 @@ test "bindSingleValue - type validation comptime check" {
     try std.testing.expectEqual(.pointer, @typeInfo(@TypeOf(str_val)));
     try std.testing.expectEqual(.optional, @typeInfo(@TypeOf(null_val)));
     try std.testing.expectEqual(.optional, @typeInfo(@TypeOf(some_val)));
+}
+
+// ============================================================================
+// D1Result (Unified API) Tests
+// ============================================================================
+
+test "D1Result - type has expected variants" {
+    const User = struct { id: u32, name: []const u8 };
+    const ResultType = D1Result(User);
+
+    // Check that the type is a tagged union with expected variants
+    const info = @typeInfo(ResultType);
+    try std.testing.expectEqual(.@"union", info);
+
+    const union_info = info.@"union";
+    try std.testing.expectEqual(@as(usize, 4), union_info.fields.len);
+
+    // Verify field names
+    try std.testing.expectEqualStrings("rows", union_info.fields[0].name);
+    try std.testing.expectEqualStrings("command", union_info.fields[1].name);
+    try std.testing.expectEqualStrings("empty", union_info.fields[2].name);
+    try std.testing.expectEqualStrings("err", union_info.fields[3].name);
+}
+
+test "D1Result - has expected methods" {
+    const User = struct { id: u32 };
+    const ResultType = D1Result(User);
+
+    try std.testing.expect(@hasDecl(ResultType, "deinit"));
+    try std.testing.expect(@hasDecl(ResultType, "isOk"));
+    try std.testing.expect(@hasDecl(ResultType, "isErr"));
+    try std.testing.expect(@hasDecl(ResultType, "changes"));
+    try std.testing.expect(@hasDecl(ResultType, "lastRowId"));
+    try std.testing.expect(@hasDecl(ResultType, "duration"));
+}
+
+test "D1Result - void type for non-SELECT queries" {
+    // void should be usable for INSERT/UPDATE/DELETE/DDL
+    const ResultType = D1Result(void);
+    const info = @typeInfo(ResultType);
+    try std.testing.expectEqual(.@"union", info);
+}
+
+test "D1Rows - type has expected methods" {
+    const User = struct { id: u32, name: []const u8 };
+    const RowsType = D1Rows(User);
+
+    try std.testing.expect(@hasDecl(RowsType, "next"));
+    try std.testing.expect(@hasDecl(RowsType, "deinit"));
+    try std.testing.expect(@hasDecl(RowsType, "count"));
+    try std.testing.expect(@hasDecl(RowsType, "duration"));
+}
+
+test "CommandMeta - has expected fields" {
+    const meta = CommandMeta{
+        .changes = 5,
+        .last_row_id = 42,
+        .duration = 1.5,
+    };
+
+    try std.testing.expectEqual(@as(u64, 5), meta.changes);
+    try std.testing.expectEqual(@as(?u64, 42), meta.last_row_id);
+    try std.testing.expectEqual(@as(f64, 1.5), meta.duration);
+}
+
+test "CommandMeta - last_row_id can be null" {
+    const meta = CommandMeta{
+        .changes = 10,
+        .last_row_id = null,
+        .duration = 2.0,
+    };
+
+    try std.testing.expectEqual(@as(u64, 10), meta.changes);
+    try std.testing.expectEqual(@as(?u64, null), meta.last_row_id);
+}
+
+test "EmptyMeta - has duration field" {
+    const meta = EmptyMeta{
+        .duration = 0.5,
+    };
+
+    try std.testing.expectEqual(@as(f64, 0.5), meta.duration);
+}
+
+test "D1Result - isOk and isErr methods" {
+    const ResultType = D1Result(void);
+
+    // Test .err variant
+    var err_result: ResultType = .err;
+    try std.testing.expect(err_result.isErr());
+    try std.testing.expect(!err_result.isOk());
+
+    // Test .command variant
+    var cmd_result: ResultType = .{ .command = .{
+        .changes = 1,
+        .last_row_id = 1,
+        .duration = 0.1,
+    } };
+    try std.testing.expect(cmd_result.isOk());
+    try std.testing.expect(!cmd_result.isErr());
+
+    // Test .empty variant
+    var empty_result: ResultType = .{ .empty = .{ .duration = 0.1 } };
+    try std.testing.expect(empty_result.isOk());
+    try std.testing.expect(!empty_result.isErr());
+}
+
+test "D1Result - changes accessor" {
+    const ResultType = D1Result(void);
+
+    // .command should return changes
+    var cmd_result: ResultType = .{ .command = .{
+        .changes = 42,
+        .last_row_id = null,
+        .duration = 0.1,
+    } };
+    try std.testing.expectEqual(@as(u64, 42), cmd_result.changes());
+
+    // .err should return 0
+    var err_result: ResultType = .err;
+    try std.testing.expectEqual(@as(u64, 0), err_result.changes());
+
+    // .empty should return 0
+    var empty_result: ResultType = .{ .empty = .{ .duration = 0.1 } };
+    try std.testing.expectEqual(@as(u64, 0), empty_result.changes());
+}
+
+test "D1Result - lastRowId accessor" {
+    const ResultType = D1Result(void);
+
+    // .command with last_row_id
+    var cmd_with_id: ResultType = .{ .command = .{
+        .changes = 1,
+        .last_row_id = 123,
+        .duration = 0.1,
+    } };
+    try std.testing.expectEqual(@as(?u64, 123), cmd_with_id.lastRowId());
+
+    // .command without last_row_id
+    var cmd_without_id: ResultType = .{ .command = .{
+        .changes = 1,
+        .last_row_id = null,
+        .duration = 0.1,
+    } };
+    try std.testing.expectEqual(@as(?u64, null), cmd_without_id.lastRowId());
+
+    // .err should return null
+    var err_result: ResultType = .err;
+    try std.testing.expectEqual(@as(?u64, null), err_result.lastRowId());
+}
+
+test "D1Result - duration accessor for all variants" {
+    const ResultType = D1Result(void);
+
+    // .command
+    var cmd_result: ResultType = .{ .command = .{
+        .changes = 1,
+        .last_row_id = null,
+        .duration = 1.5,
+    } };
+    try std.testing.expectEqual(@as(f64, 1.5), cmd_result.duration());
+
+    // .empty
+    var empty_result: ResultType = .{ .empty = .{ .duration = 2.5 } };
+    try std.testing.expectEqual(@as(f64, 2.5), empty_result.duration());
+
+    // .err
+    var err_result: ResultType = .err;
+    try std.testing.expectEqual(@as(f64, 0), err_result.duration());
+}
+
+test "D1Result - switch exhaustiveness" {
+    const User = struct { id: u32 };
+    const ResultType = D1Result(User);
+
+    // This test verifies that switch is exhaustive (compile-time check)
+    const result: ResultType = .err;
+    const msg = switch (result) {
+        .rows => "rows",
+        .command => "command",
+        .empty => "empty",
+        .err => "err",
+    };
+    try std.testing.expectEqualStrings("err", msg);
 }

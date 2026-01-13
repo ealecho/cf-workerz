@@ -642,6 +642,98 @@ fn handleUsers(ctx: *FetchContext) void {
 }
 ```
 
+### Unified API (zpg-inspired)
+
+A single `run()` method that returns a tagged union result, handling all query types elegantly:
+
+```zig
+const User = struct {
+    id: u32,
+    name: []const u8,
+    email: []const u8,
+};
+
+fn handleWithRun(ctx: *FetchContext) void {
+    const db = ctx.env.d1("MY_DB") orelse {
+        ctx.throw(500, "D1 not configured");
+        return;
+    };
+    defer db.free();
+
+    // SELECT query -> .rows
+    var select = db.run(User, "SELECT * FROM users WHERE active = ?", .{true});
+    defer select.deinit();
+    switch (select) {
+        .rows => |*rows| {
+            while (rows.next()) |user| {
+                // user.id, user.name, user.email
+                _ = user;
+            }
+        },
+        .err => {
+            ctx.json(.{ .err = "Query failed" }, 500);
+            return;
+        },
+        else => {},
+    }
+
+    // INSERT query -> .command
+    var insert = db.run(void, "INSERT INTO users (name, email) VALUES (?, ?)", .{ "Alice", "alice@example.com" });
+    defer insert.deinit();
+    switch (insert) {
+        .command => |cmd| {
+            ctx.json(.{
+                .inserted = cmd.changes,
+                .id = cmd.last_row_id,
+                .duration_ms = cmd.duration,
+            }, 201);
+            return;
+        },
+        .err => {
+            ctx.json(.{ .err = "Insert failed" }, 500);
+            return;
+        },
+        else => {},
+    }
+
+    // DDL query -> .empty
+    var create = db.run(void, "CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY)", .{});
+    defer create.deinit();
+    switch (create) {
+        .empty => ctx.json(.{ .success = true }, 200),
+        .err => ctx.json(.{ .err = "Create failed" }, 500),
+        else => {},
+    }
+}
+```
+
+### D1Result Variants
+
+| Variant | Description | Fields |
+|---------|-------------|--------|
+| `.rows` | SELECT returned data | Iterator with `.next()`, `.count()`, `.duration()` |
+| `.command` | INSERT/UPDATE/DELETE | `.changes`, `.last_row_id`, `.duration` |
+| `.empty` | DDL or empty SELECT | `.duration` |
+| `.err` | Query failed (rare) | (none) |
+
+> **Note:** D1 throws JavaScript exceptions for most errors (missing tables, UNIQUE constraint violations, syntax errors). These exceptions propagate through the WASM runtime before `run()` returns. The `.err` variant is only returned when D1 explicitly returns `success: false` without throwing, which is uncommon. For robust error handling, validate data before inserting and handle JS exceptions in your TypeScript runtime.
+
+### D1Result Helper Methods
+
+```zig
+var result = db.run(User, sql, params);
+defer result.deinit();
+
+// Check success/failure
+if (result.isErr()) { /* handle error */ }
+if (result.isOk()) { /* proceed */ }
+
+// Quick accessors (return defaults for wrong variant)
+const affected = result.changes();      // 0 if not .command
+const id = result.lastRowId();          // null if not .command
+const ms = result.duration();           // 0 if .err
+```
+
 ### Supported Parameter Types
 
 | Type | Example |
