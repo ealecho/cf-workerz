@@ -317,7 +317,7 @@ fn deriveKey(
         password,
         &crypto.SubtleCryptoImportKeyAlgorithm{ .name = "PBKDF2" },
         false,
-        &.{.deriveKey},
+        &.{.deriveBits},
     ) orelse return null;
     defer keyMaterial.free();
 
