@@ -312,7 +312,7 @@ pub const D1Database = struct {
     /// if (db.execute("INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email })) |_| {
     ///     ctx.json(.{ .success = true }, 201);
     /// } else {
-    ///     ctx.json(.{ .@"error" = "Insert failed" }, 500);
+    ///     ctx.json(.{ .err = "Insert failed" }, 500);
     /// }
     ///
     /// // Update users

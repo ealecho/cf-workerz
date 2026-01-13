@@ -1727,24 +1727,24 @@ fn handleLogin(ctx: *FetchContext) void {
     if (ctx.env.rateLimiter("LOGIN_LIMITER")) |limiter| {
         defer limiter.free();
         if (!limiter.limit(ip).success) {
-            ctx.json(.{ .@"error" = "Too many attempts" }, 429);
+            ctx.json(.{ .err = "Too many attempts" }, 429);
             return;
         }
     }
 
     // Parse credentials
     var json = ctx.bodyJson() orelse {
-        ctx.json(.{ .@"error" = "Invalid JSON" }, 400);
+        ctx.json(.{ .err = "Invalid JSON" }, 400);
         return;
     };
     defer json.deinit();
 
     const email = json.getString("email") orelse {
-        ctx.json(.{ .@"error" = "Email required" }, 400);
+        ctx.json(.{ .err = "Email required" }, 400);
         return;
     };
     const password = json.getString("password") orelse {
-        ctx.json(.{ .@"error" = "Password required" }, 400);
+        ctx.json(.{ .err = "Password required" }, 400);
         return;
     };
 
@@ -1754,17 +1754,17 @@ fn handleLogin(ctx: *FetchContext) void {
 
     const User = struct { id: []const u8, password_hash: []const u8 };
     const user = db.one(User, "SELECT id, password_hash FROM users WHERE email = ?", .{email}) orelse {
-        ctx.json(.{ .@"error" = "Invalid credentials" }, 401);
+        ctx.json(.{ .err = "Invalid credentials" }, 401);
         return;
     };
 
     // Verify password
     const valid = auth.verifyPassword(allocator, password, user.password_hash) catch {
-        ctx.json(.{ .@"error" = "Invalid credentials" }, 401);
+        ctx.json(.{ .err = "Invalid credentials" }, 401);
         return;
     };
     if (!valid) {
-        ctx.json(.{ .@"error" = "Invalid credentials" }, 401);
+        ctx.json(.{ .err = "Invalid credentials" }, 401);
         return;
     }
 
@@ -1777,7 +1777,7 @@ fn handleLogin(ctx: *FetchContext) void {
         .exp = now + 3600,
         .iat = now,
     }, JWT_SECRET, .{}) catch {
-        ctx.json(.{ .@"error" = "Token generation failed" }, 500);
+        ctx.json(.{ .err = "Token generation failed" }, 500);
         return;
     };
     defer token.deinit();
@@ -1787,7 +1787,7 @@ fn handleLogin(ctx: *FetchContext) void {
 
 fn handleProtected(ctx: *FetchContext) void {
     const auth_header = ctx.header("Authorization") orelse {
-        ctx.json(.{ .@"error" = "Unauthorized" }, 401);
+        ctx.json(.{ .err = "Unauthorized" }, 401);
         return;
     };
 
@@ -1795,7 +1795,7 @@ fn handleProtected(ctx: *FetchContext) void {
     const token = if (std.mem.startsWith(u8, auth_header, "Bearer "))
         auth_header[7..]
     else {
-        ctx.json(.{ .@"error" = "Invalid format" }, 401);
+        ctx.json(.{ .err = "Invalid format" }, 401);
         return;
     };
 
@@ -1804,13 +1804,13 @@ fn handleProtected(ctx: *FetchContext) void {
         .issuer = JWT_ISSUER,
         .audience = JWT_AUDIENCE,
     }) catch {
-        ctx.json(.{ .@"error" = "Invalid token" }, 401);
+        ctx.json(.{ .err = "Invalid token" }, 401);
         return;
     };
     defer claims.deinit();
 
     const user_id = claims.sub orelse {
-        ctx.json(.{ .@"error" = "Invalid token" }, 401);
+        ctx.json(.{ .err = "Invalid token" }, 401);
         return;
     };
 
@@ -1830,13 +1830,13 @@ fn handleRegister(ctx: *FetchContext) void {
     }) catch |err| {
         switch (err) {
             auth.PasswordError.WeakPassword => {
-                ctx.json(.{ .@"error" = "Password too common" }, 400);
+                ctx.json(.{ .err = "Password too common" }, 400);
             },
             auth.PasswordError.PasswordTooShort => {
-                ctx.json(.{ .@"error" = "Password too short" }, 400);
+                ctx.json(.{ .err = "Password too short" }, 400);
             },
             else => {
-                ctx.json(.{ .@"error" = "Registration failed" }, 500);
+                ctx.json(.{ .err = "Registration failed" }, 500);
             },
         }
         return;
@@ -1853,7 +1853,7 @@ fn handleRegister(ctx: *FetchContext) void {
         "INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
         .{ user_id, email, hashed.toString(), now },
     ) == null) {
-        ctx.json(.{ .@"error" = "Email already registered" }, 409);
+        ctx.json(.{ .err = "Email already registered" }, 409);
         return;
     }
 
@@ -1971,7 +1971,7 @@ fn createUser(ctx: *FetchContext) void {
     defer db.free();
 
     if (db.execute("INSERT INTO users (name, email) VALUES (?, ?)", .{ name, email }) == null) {
-        ctx.json(.{ .@"error" = "Insert failed" }, 500);
+        ctx.json(.{ .err = "Insert failed" }, 500);
         return;
     }
     ctx.json(.{ .created = true }, 201);

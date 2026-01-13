@@ -59,24 +59,24 @@ fn handleHealth(ctx: *FetchContext) void {
 fn handleRegister(ctx: *FetchContext) void {
     // Parse request body
     var json = ctx.bodyJson() orelse {
-        ctx.json(.{ .@"error" = "Invalid JSON body" }, 400);
+        ctx.json(.{ .err = "Invalid JSON body" }, 400);
         return;
     };
     defer json.deinit();
 
     const email = json.getString("email") orelse {
-        ctx.json(.{ .@"error" = "Email is required" }, 400);
+        ctx.json(.{ .err = "Email is required" }, 400);
         return;
     };
 
     const password = json.getString("password") orelse {
-        ctx.json(.{ .@"error" = "Password is required" }, 400);
+        ctx.json(.{ .err = "Password is required" }, 400);
         return;
     };
 
     // Validate password strength
     if (password.len < 8) {
-        ctx.json(.{ .@"error" = "Password must be at least 8 characters" }, 400);
+        ctx.json(.{ .err = "Password must be at least 8 characters" }, 400);
         return;
     }
 
@@ -88,16 +88,16 @@ fn handleRegister(ctx: *FetchContext) void {
     }) catch |err| {
         switch (err) {
             auth.PasswordError.WeakPassword => {
-                ctx.json(.{ .@"error" = "Password is too common. Choose a stronger password." }, 400);
+                ctx.json(.{ .err = "Password is too common. Choose a stronger password." }, 400);
                 return;
             },
             auth.PasswordError.PasswordTooShort => {
-                ctx.json(.{ .@"error" = "Password must be at least 8 characters" }, 400);
+                ctx.json(.{ .err = "Password must be at least 8 characters" }, 400);
                 return;
             },
             else => {
                 auth.log.eventSimple(.login_failed, "Password hashing failed");
-                ctx.json(.{ .@"error" = "Registration failed" }, 500);
+                ctx.json(.{ .err = "Registration failed" }, 500);
                 return;
             },
         }
@@ -112,7 +112,7 @@ fn handleRegister(ctx: *FetchContext) void {
 
     // Store user in D1 database
     const db = ctx.env.d1("DB") orelse {
-        ctx.json(.{ .@"error" = "Database not configured" }, 500);
+        ctx.json(.{ .err = "Database not configured" }, 500);
         return;
     };
     defer db.free();
@@ -122,7 +122,7 @@ fn handleRegister(ctx: *FetchContext) void {
         .{ user_id, email, hashed.toString(), now, now },
     ) == null) {
         // Insert failed - likely duplicate email (UNIQUE constraint)
-        ctx.json(.{ .@"error" = "Email already registered" }, 409);
+        ctx.json(.{ .err = "Email already registered" }, 409);
         return;
     }
 
@@ -152,31 +152,31 @@ fn handleLogin(ctx: *FetchContext) void {
                 .ip = ip,
                 .path = "/api/login",
             });
-            ctx.json(.{ .@"error" = "Too many login attempts. Try again later." }, 429);
+            ctx.json(.{ .err = "Too many login attempts. Try again later." }, 429);
             return;
         }
     }
 
     // Parse request body
     var json = ctx.bodyJson() orelse {
-        ctx.json(.{ .@"error" = "Invalid JSON body" }, 400);
+        ctx.json(.{ .err = "Invalid JSON body" }, 400);
         return;
     };
     defer json.deinit();
 
     const email = json.getString("email") orelse {
-        ctx.json(.{ .@"error" = "Email is required" }, 400);
+        ctx.json(.{ .err = "Email is required" }, 400);
         return;
     };
 
     const password = json.getString("password") orelse {
-        ctx.json(.{ .@"error" = "Password is required" }, 400);
+        ctx.json(.{ .err = "Password is required" }, 400);
         return;
     };
 
     // Get user from database
     const db = ctx.env.d1("DB") orelse {
-        ctx.json(.{ .@"error" = "Database not configured" }, 500);
+        ctx.json(.{ .err = "Database not configured" }, 500);
         return;
     };
     defer db.free();
@@ -190,20 +190,20 @@ fn handleLogin(ctx: *FetchContext) void {
     const user = db.one(User, "SELECT id, email, password_hash FROM users WHERE email = ?", .{email}) orelse {
         // OWASP: Same error message for user not found
         auth.log.event(.login_failed, "User not found", .{ .ip = ip, .path = "/api/login" });
-        ctx.json(.{ .@"error" = "Invalid email or password" }, 401);
+        ctx.json(.{ .err = "Invalid email or password" }, 401);
         return;
     };
 
     // Verify password
     const valid = auth.verifyPassword(allocator, password, user.password_hash) catch {
         auth.log.event(.login_failed, "Password verification failed", .{ .ip = ip, .path = "/api/login" });
-        ctx.json(.{ .@"error" = "Invalid email or password" }, 401);
+        ctx.json(.{ .err = "Invalid email or password" }, 401);
         return;
     };
 
     if (!valid) {
         auth.log.event(.login_failed, email, .{ .ip = ip, .path = "/api/login" });
-        ctx.json(.{ .@"error" = "Invalid email or password" }, 401);
+        ctx.json(.{ .err = "Invalid email or password" }, 401);
         return;
     }
 
@@ -218,7 +218,7 @@ fn handleLogin(ctx: *FetchContext) void {
         .iat = now,
     }, JWT_SECRET, .{}) catch {
         auth.log.event(.login_failed, "Token generation failed", .{ .ip = ip, .path = "/api/login" });
-        ctx.json(.{ .@"error" = "Login failed" }, 500);
+        ctx.json(.{ .err = "Login failed" }, 500);
         return;
     };
     defer token.deinit();
@@ -241,7 +241,7 @@ fn handleMe(ctx: *FetchContext) void {
     // Get Authorization header
     const auth_header = ctx.header("Authorization") orelse {
         auth.log.event(.auth_failed, "Missing Authorization header", .{ .ip = ip, .path = "/api/me" });
-        ctx.json(.{ .@"error" = "Authorization header required" }, 401);
+        ctx.json(.{ .err = "Authorization header required" }, 401);
         return;
     };
 
@@ -250,7 +250,7 @@ fn handleMe(ctx: *FetchContext) void {
         auth_header[7..]
     else {
         auth.log.event(.auth_failed, "Invalid Authorization format", .{ .ip = ip, .path = "/api/me" });
-        ctx.json(.{ .@"error" = "Invalid Authorization format. Use: Bearer <token>" }, 401);
+        ctx.json(.{ .err = "Invalid Authorization format. Use: Bearer <token>" }, 401);
         return;
     };
 
@@ -267,19 +267,19 @@ fn handleMe(ctx: *FetchContext) void {
             else => "Token verification failed",
         };
         auth.log.event(.auth_failed, err_msg, .{ .ip = ip, .path = "/api/me" });
-        ctx.json(.{ .@"error" = err_msg }, 401);
+        ctx.json(.{ .err = err_msg }, 401);
         return;
     };
     defer claims.deinit();
 
     const user_id = claims.sub orelse {
-        ctx.json(.{ .@"error" = "Invalid token claims" }, 401);
+        ctx.json(.{ .err = "Invalid token claims" }, 401);
         return;
     };
 
     // Get user from database
     const db = ctx.env.d1("DB") orelse {
-        ctx.json(.{ .@"error" = "Database not configured" }, 500);
+        ctx.json(.{ .err = "Database not configured" }, 500);
         return;
     };
     defer db.free();
@@ -291,7 +291,7 @@ fn handleMe(ctx: *FetchContext) void {
     };
 
     const user = db.one(User, "SELECT id, email, created_at FROM users WHERE id = ?", .{user_id}) orelse {
-        ctx.json(.{ .@"error" = "User not found" }, 404);
+        ctx.json(.{ .err = "User not found" }, 404);
         return;
     };
 
